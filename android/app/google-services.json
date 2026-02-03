@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "705321789332",
+    "project_id": "disastour-88531",
+    "storage_bucket": "disastour-88531.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:705321789332:android:163f78e125e9c976abd181",
+        "android_client_info": {
+          "package_name": "com.disastour"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCj_GpRsvc2zysAJTfvmGuksjOiiHSLswA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
