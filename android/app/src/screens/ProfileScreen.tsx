@@ -24,11 +24,19 @@ import AddContactModal from '../components/modals/AddContactModal';
 import AddFamilyModal, { FamilyMemberData } from '../components/modals/AddFamilyModal';
 import AddFriendModal, { FriendData } from '../components/modals/AddFriendModal';
 
-interface Contact {
+interface FamilyMember {
   id: string;
-  name: string;
-  type: 'family' | 'friend';
-  avatar: string;
+  displayName: string;
+  nickname: string;
+  relationship: string;
+  photoURL?: string;
+}
+
+interface Friend {
+  id: string;
+  displayName: string;
+  nickname: string;
+  photoURL?: string;
 }
 
 interface UserProfile {
@@ -48,6 +56,8 @@ const ProfileScreen = ({ navigation }: any) => {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [friends, setFriends] = useState<Friend[]>([]);
 
   const loadUserProfile = async () => {
     const authInstance = getAuth();
@@ -98,8 +108,82 @@ const ProfileScreen = ({ navigation }: any) => {
     }
   };
 
+  // Load family members from Firebase
+  const loadFamilyMembers = () => {
+    const authInstance = getAuth();
+    const user = authInstance.currentUser;
+
+    if (!user?.uid) return;
+
+    const unsubscribe = firestore()
+      .collection('family')
+      .doc(user.uid)
+      .collection('userFamily')
+      .onSnapshot(
+        (snapshot) => {
+          const members: FamilyMember[] = [];
+          snapshot.forEach((doc) => {
+            const data = doc.data();
+            members.push({
+              id: doc.id,
+              displayName: data.userName || data.displayName || 'Unknown',
+              nickname: data.nickname || '',
+              relationship: data.relationship || 'Other',
+              photoURL: data.photoURL || '',
+            });
+          });
+          setFamilyMembers(members);
+        },
+        (error) => {
+          console.error('Error loading family members:', error);
+        }
+      );
+
+    return unsubscribe;
+  };
+
+  // Load friends from Firebase
+  const loadFriends = () => {
+    const authInstance = getAuth();
+    const user = authInstance.currentUser;
+
+    if (!user?.uid) return;
+
+    const unsubscribe = firestore()
+      .collection('friends')
+      .doc(user.uid)
+      .collection('userFriends')
+      .onSnapshot(
+        (snapshot) => {
+          const friendsList: Friend[] = [];
+          snapshot.forEach((doc) => {
+            const data = doc.data();
+            friendsList.push({
+              id: doc.id,
+              displayName: data.userName || data.displayName || 'Unknown',
+              nickname: data.nickname || '',
+              photoURL: data.photoURL || '',
+            });
+          });
+          setFriends(friendsList);
+        },
+        (error) => {
+          console.error('Error loading friends:', error);
+        }
+      );
+
+    return unsubscribe;
+  };
+
   useEffect(() => {
     loadUserProfile();
+    const unsubscribeFamily = loadFamilyMembers();
+    const unsubscribeFriends = loadFriends();
+
+    return () => {
+      if (unsubscribeFamily) unsubscribeFamily();
+      if (unsubscribeFriends) unsubscribeFriends();
+    };
   }, []);
 
   useFocusEffect(
@@ -127,22 +211,15 @@ const ProfileScreen = ({ navigation }: any) => {
 
   const handleFamilySubmit = (data: FamilyMemberData) => {
     console.log('Family member added:', data);
-    Alert.alert('Success', `${data.nickname} has been added to your family contacts`);
+    Alert.alert('Success', `Request sent to ${data.nickname || data.email}`);
     setShowAddFamilyModal(false);
-    // TODO: Add to database/state
   };
 
   const handleFriendSubmit = (data: FriendData) => {
     console.log('Friend added:', data);
-    Alert.alert('Success', `Request sent to ${data.nickname}`);
+    Alert.alert('Success', `Request sent to ${data.nickname || data.email}`);
     setShowAddFriendModal(false);
-    // TODO: Add to database/state
   };
-
-  const contacts: Contact[] = [
-    { id: '1', name: 'lastikman', type: 'family', avatar: '👤' },
-    { id: '2', name: 'bakitman', type: 'friend', avatar: '👤' },
-  ];
 
   const handleSignOut = async () => {
     Alert.alert(
@@ -264,25 +341,49 @@ const ProfileScreen = ({ navigation }: any) => {
             onPress={() => setShowFamily(!showFamily)}
           >
             <Text style={styles.sectionTitle}>
-              Family ({contacts.filter(c => c.type === 'family').length})
+              Family ({familyMembers.length})
             </Text>
             <Text style={styles.collapseIcon}>{showFamily ? '▼' : '▶'}</Text>
           </TouchableOpacity>
 
           {showFamily && (
             <View style={styles.contactsList}>
-              {contacts
-                .filter(c => c.type === 'family')
-                .map(contact => (
-                  <View key={contact.id} style={styles.contactCard}>
-                    <View style={styles.contactAvatar}>
-                      <Text style={styles.contactAvatarText}>
-                        {contact.name.charAt(0).toUpperCase()}
-                      </Text>
+              {familyMembers.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No family members yet</Text>
+                  <Text style={styles.emptyStateSubtext}>
+                    Tap the + button to add family
+                  </Text>
+                </View>
+              ) : (
+                familyMembers.map(member => {
+                  const displayText = member.nickname || member.displayName || 'Unknown';
+                  return (
+                    <View key={member.id} style={styles.contactCard}>
+                      {member.photoURL ? (
+                        <Image 
+                          source={{ uri: member.photoURL }} 
+                          style={styles.contactAvatar}
+                        />
+                      ) : (
+                        <View style={styles.contactAvatar}>
+                          <Text style={styles.contactAvatarText}>
+                            {displayText.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={styles.contactInfo}>
+                        <Text style={styles.contactName}>
+                          {displayText}
+                        </Text>
+                        <Text style={styles.contactRelationship}>
+                          {member.relationship}
+                        </Text>
+                      </View>
                     </View>
-                    <Text style={styles.contactName}>{contact.name}</Text>
-                  </View>
-                ))}
+                  );
+                })
+              )}
             </View>
           )}
         </View>
@@ -294,25 +395,46 @@ const ProfileScreen = ({ navigation }: any) => {
             onPress={() => setShowFriends(!showFriends)}
           >
             <Text style={styles.sectionTitle}>
-              Friends ({contacts.filter(c => c.type === 'friend').length})
+              Friends ({friends.length})
             </Text>
             <Text style={styles.collapseIcon}>{showFriends ? '▼' : '▶'}</Text>
           </TouchableOpacity>
 
           {showFriends && (
             <View style={styles.contactsList}>
-              {contacts
-                .filter(c => c.type === 'friend')
-                .map(contact => (
-                  <View key={contact.id} style={styles.contactCard}>
-                    <View style={styles.contactAvatar}>
-                      <Text style={styles.contactAvatarText}>
-                        {contact.name.charAt(0).toUpperCase()}
-                      </Text>
+              {friends.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No friends yet</Text>
+                  <Text style={styles.emptyStateSubtext}>
+                    Tap the + button to add friends
+                  </Text>
+                </View>
+              ) : (
+                friends.map(friend => {
+                  const displayText = friend.nickname || friend.displayName || 'Unknown';
+                  return (
+                    <View key={friend.id} style={styles.contactCard}>
+                      {friend.photoURL ? (
+                        <Image 
+                          source={{ uri: friend.photoURL }} 
+                          style={styles.contactAvatar}
+                        />
+                      ) : (
+                        <View style={styles.contactAvatar}>
+                          <Text style={styles.contactAvatarText}>
+                            {displayText.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={styles.contactInfo}>
+                        <Text style={styles.contactName}>
+                          {displayText}
+                        </Text>
+                      </View>
                     </View>
-                    <Text style={styles.contactName}>{contact.name}</Text>
-                  </View>
-                ))}
+                  );
+                })
+              )}
             </View>
           )}
         </View>
@@ -531,6 +653,22 @@ const styles = StyleSheet.create({
   contactsList: {
     gap: 12,
   },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 20,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: '#94A3B8',
+    textAlign: 'center',
+  },
   contactCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -554,10 +692,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  contactInfo: {
+    flex: 1,
+  },
   contactName: {
     fontSize: 16,
     fontWeight: '600',
     color: '#1E293B',
+  },
+  contactRelationship: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    textTransform: 'capitalize',
   },
   signOutButton: {
     marginHorizontal: 20,

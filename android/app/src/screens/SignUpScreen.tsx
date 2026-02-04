@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   StatusBar,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -30,6 +31,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
   const [loading, setLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [checkingNow, setCheckingNow] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Aggressive polling for email verification
   useEffect(() => {
@@ -240,6 +242,12 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
     }
   };
 
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await handleManualCheck();
+    setRefreshing(false);
+  };
+
   if (emailSent) {
     const authInstance = getAuth();
     const currentUser = authInstance.currentUser;
@@ -247,7 +255,19 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
 
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#3B82F6']}
+              tintColor="#3B82F6"
+              title="Pull to check verification"
+              titleColor="#64748B"
+            />
+          }
+        >
           <View style={styles.content}>
             <TouchableOpacity 
               onPress={() => {
@@ -286,6 +306,13 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                 <Step number="1" text="Check your email inbox (and spam folder)" />
                 <Step number="2" text="Click the verification link" />
                 <Step number="3" text="Wait for automatic sign-in" />
+              </View>
+
+              <View style={styles.refreshHint}>
+                <Text style={styles.refreshHintIcon}>👇</Text>
+                <Text style={styles.refreshHintText}>
+                  Pull down to refresh verification status
+                </Text>
               </View>
 
               <TouchableOpacity
@@ -598,7 +625,7 @@ const styles = StyleSheet.create({
   steps: {
     width: '100%',
     gap: 16,
-    marginBottom: 32,
+    marginBottom: 24,
   },
   step: {
     flexDirection: 'row',
@@ -628,6 +655,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#334155',
     fontWeight: '500',
+  },
+  refreshHint: {
+    backgroundColor: '#DBEAFE',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  refreshHintIcon: {
+    fontSize: 16,
+  },
+  refreshHintText: {
+    fontSize: 13,
+    color: '#1E40AF',
+    fontWeight: '600',
   },
   checkButton: {
     backgroundColor: '#10B981',
