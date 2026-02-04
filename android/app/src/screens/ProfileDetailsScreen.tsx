@@ -41,23 +41,23 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
 
   const validateInputs = () => {
     if (!name.trim()) {
-      Alert.alert('Error', 'Please enter your name');
+      Alert.alert('Required Field', 'Please enter your full name');
       return false;
     }
     if (!email.trim()) {
-      Alert.alert('Error', 'Please enter your email');
+      Alert.alert('Required Field', 'Please enter your email');
       return false;
     }
     if (!address.trim()) {
-      Alert.alert('Error', 'Please enter your address');
+      Alert.alert('Required Field', 'Please enter your address');
       return false;
     }
     if (!contactNo.trim()) {
-      Alert.alert('Error', 'Please enter your contact number');
+      Alert.alert('Required Field', 'Please enter your contact number');
       return false;
     }
     if (contactNo.length < 10) {
-      Alert.alert('Error', 'Please enter a valid contact number');
+      Alert.alert('Invalid Input', 'Please enter a valid contact number (at least 10 digits)');
       return false;
     }
     return true;
@@ -128,7 +128,7 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
 
     setLoading(true);
     try {
-      // Upload profile image if selected
+      // Upload profile image if selected (optional)
       let profileImageUrl = null;
       if (profileImage) {
         setUploadingImage(true);
@@ -183,7 +183,7 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
         >
           <View style={styles.content}>
             <View style={styles.header}>
-              {/* Profile Picture Upload */}
+              {/* Profile Picture Upload - Optional */}
               <TouchableOpacity 
                 style={styles.imageContainer}
                 onPress={handleImagePicker}
@@ -200,6 +200,7 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
                   <Text style={styles.editIcon}>+</Text>
                 </View>
               </TouchableOpacity>
+              <Text style={styles.optionalText}>(Profile picture is optional)</Text>
 
               <Text style={styles.title}>Complete Your Profile</Text>
               <Text style={styles.subtitle}>
@@ -209,7 +210,7 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
 
             <View style={styles.form}>
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Full Name</Text>
+                <Text style={styles.label}>Full Name *</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="John Doe"
@@ -222,7 +223,7 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
 
               <View style={styles.inputGroup}>
                 <View style={styles.labelRow}>
-                  <Text style={styles.label}>Email Address</Text>
+                  <Text style={styles.label}>Email Address *</Text>
                   <View style={styles.verifiedBadge}>
                     <Text style={styles.verifiedText}>Verified</Text>
                   </View>
@@ -239,7 +240,7 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Address</Text>
+                <Text style={styles.label}>Address *</Text>
                 <TextInput
                   style={[styles.input, styles.textarea]}
                   placeholder="123 Main St, City, State, Country"
@@ -253,16 +254,20 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Contact Number</Text>
+                <Text style={styles.label}>Contact Number *</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="+1 (555) 123-4567"
+                  placeholder="+63 912 345 6789"
                   placeholderTextColor="#94A3B8"
                   keyboardType="phone-pad"
                   value={contactNo}
                   onChangeText={setContactNo}
                   editable={!loading}
                 />
+              </View>
+
+              <View style={styles.requiredNote}>
+                <Text style={styles.requiredText}>* Required fields</Text>
               </View>
 
               <TouchableOpacity
@@ -316,7 +321,7 @@ const styles = StyleSheet.create({
   },
   imageContainer: {
     position: 'relative',
-    marginBottom: 24,
+    marginBottom: 8,
   },
   profileImage: {
     width: 100,
@@ -333,7 +338,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 3,
-    borderColor: '#3B82F6',
+    borderColor: '#BFDBFE',
+    borderStyle: 'dashed',
   },
   placeholderIcon: {
     fontSize: 40,
@@ -360,6 +366,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+  optionalText: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginBottom: 16,
+    fontStyle: 'italic',
   },
   title: {
     fontSize: 32,
@@ -421,6 +433,20 @@ const styles = StyleSheet.create({
     minHeight: 100,
     textAlignVertical: 'top',
     paddingTop: 16,
+  },
+  requiredNote: {
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  requiredText: {
+    fontSize: 13,
+    color: '#92400E',
+    fontWeight: '600',
+    textAlign: 'center',
   },
   completeButton: {
     backgroundColor: '#3B82F6',
