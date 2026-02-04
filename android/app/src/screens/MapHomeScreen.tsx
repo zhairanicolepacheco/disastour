@@ -11,7 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, PROVIDER_GOOGLE, Circle } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE, Circle, Polyline } from 'react-native-maps';
 import MapClusteringView from 'react-native-map-clustering';
 import Geolocation from '@react-native-community/geolocation';
 import { getAuth } from '@react-native-firebase/auth';
@@ -67,6 +67,8 @@ const MapHomeScreen = ({ navigation }: any) => {
     latitude: number;
     longitude: number;
   } | null>(null);
+  const [routeCoordinates, setRouteCoordinates] = useState<Array<{ latitude: number; longitude: number }>>([]);
+  const [showingRoute, setShowingRoute] = useState(false);
 
   useEffect(() => {
     requestLocationPermission();
@@ -99,20 +101,187 @@ const MapHomeScreen = ({ navigation }: any) => {
   const getCurrentLocation = () => {
     Geolocation.getCurrentPosition(
       (position) => {
-        setUserLocation({
+        const newLocation = {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
-        });
+        };
+        setUserLocation(newLocation);
+        console.log('Location fetched:', newLocation);
       },
       (error) => {
         console.log('Location error:', error);
+        // Try again with less strict settings
+        Geolocation.getCurrentPosition(
+          (position) => {
+            const newLocation = {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            };
+            setUserLocation(newLocation);
+            console.log('Location fetched (retry):', newLocation);
+          },
+          (retryError) => {
+            console.log('Location retry error:', retryError);
+          },
+          { enableHighAccuracy: false, timeout: 30000, maximumAge: 60000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }
     );
   };
 
   const recenterMap = () => {
-    mapRef.current?.animateToRegion(BARANGAY_LALAAN_2, 1000);
+    if (showingRoute) {
+      // Clear route immediately
+      setShowingRoute(false);
+      setRouteCoordinates([]);
+      // Then recenter the map
+      setTimeout(() => {
+        mapRef.current?.animateToRegion(BARANGAY_LALAAN_2, 1000);
+      }, 50);
+    } else {
+      mapRef.current?.animateToRegion(BARANGAY_LALAAN_2, 1000);
+    }
+  };
+
+  const getDirections = async (destinationLat: number, destinationLng: number) => {
+    // If user location is not available, try to get it first
+    if (!userLocation) {
+      // Try to get location immediately
+      Geolocation.getCurrentPosition(
+        (position) => {
+          const newLocation = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+          };
+          setUserLocation(newLocation);
+          // Retry getting directions with new location
+          fetchRoute(newLocation, destinationLat, destinationLng);
+        },
+        (error) => {
+          console.log('Location error:', error);
+          Alert.alert(
+            'Location Error',
+            'Could not get your location. Please enable location services and try again.',
+            [{ text: 'OK' }]
+          );
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      );
+      return;
+    }
+    
+    fetchRoute(userLocation, destinationLat, destinationLng);
+  };
+
+  const fetchRoute = async (
+    origin: { latitude: number; longitude: number },
+    destinationLat: number,
+    destinationLng: number
+  ) => {
+    try {
+      // Using Google Directions API with more accurate options
+      const apiKey = 'AIzaSyCv0rkk-slYFrm2obp30OUUurIanvZC--c'; // Replace with your API key
+      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destinationLat},${destinationLng}&mode=driving&alternatives=false&key=${apiKey}`;
+      
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data.status === 'OK' && data.routes && data.routes.length > 0) {
+        const points = decodePolyline(data.routes[0].overview_polyline.points);
+        setRouteCoordinates(points);
+        setShowingRoute(true);
+        
+        // Fit map to show entire route with padding
+        setTimeout(() => {
+          mapRef.current?.fitToCoordinates(points, {
+            edgePadding: { top: 120, right: 80, bottom: 200, left: 80 },
+            animated: true,
+          });
+        }, 300);
+      } else {
+        console.error('Directions API error:', data.status, data.error_message);
+        
+        // Fallback: show straight line from USER LOCATION
+        const fallbackPoints = [
+          { latitude: origin.latitude, longitude: origin.longitude },
+          { latitude: destinationLat, longitude: destinationLng },
+        ];
+        setRouteCoordinates(fallbackPoints);
+        setShowingRoute(true);
+        
+        setTimeout(() => {
+          mapRef.current?.fitToCoordinates(fallbackPoints, {
+            edgePadding: { top: 120, right: 80, bottom: 200, left: 80 },
+            animated: true,
+          });
+        }, 300);
+      }
+    } catch (error) {
+      console.error('Error fetching directions:', error);
+      
+      // Fallback: show straight line from USER LOCATION
+      const fallbackPoints = [
+        { latitude: origin.latitude, longitude: origin.longitude },
+        { latitude: destinationLat, longitude: destinationLng },
+      ];
+      setRouteCoordinates(fallbackPoints);
+      setShowingRoute(true);
+      
+      setTimeout(() => {
+        mapRef.current?.fitToCoordinates(fallbackPoints, {
+          edgePadding: { top: 120, right: 80, bottom: 200, left: 80 },
+          animated: true,
+        });
+      }, 300);
+    }
+  };
+
+  // Decode Google's encoded polyline
+  const decodePolyline = (encoded: string) => {
+    const points = [];
+    let index = 0;
+    const len = encoded.length;
+    let lat = 0;
+    let lng = 0;
+
+    while (index < len) {
+      let b;
+      let shift = 0;
+      let result = 0;
+      do {
+        b = encoded.charAt(index++).charCodeAt(0) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      const dlat = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.charAt(index++).charCodeAt(0) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      const dlng = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+      lng += dlng;
+
+      points.push({
+        latitude: lat / 1e5,
+        longitude: lng / 1e5,
+      });
+    }
+    return points;
+  };
+
+  const handleShowRoute = (center: EvacuationCenter) => {
+    getDirections(center.latitude, center.longitude);
+  };
+
+  const refreshLocation = () => {
+    getCurrentLocation();
+    Alert.alert('Refreshing Location', 'Getting your current location...');
   };
 
   // Modal handlers
@@ -128,14 +297,14 @@ const MapHomeScreen = ({ navigation }: any) => {
 
   const handleFamilySubmit = (data: FamilyMemberData) => {
     console.log('Family member added:', data);
-    Alert.alert('Success', `${data.name} has been added to your family contacts`);
+    Alert.alert('Success', `${data.nickname} has been added to your family contacts`);
     setShowAddFamilyModal(false);
     // TODO: Add to database/state
   };
 
   const handleFriendSubmit = (data: FriendData) => {
     console.log('Friend added:', data);
-    Alert.alert('Success', `Request sent to ${data.name}`);
+    Alert.alert('Success', `Request sent to ${data.nickname}`);
     setShowAddFriendModal(false);
     // TODO: Add to database/state
   };
@@ -270,7 +439,7 @@ const MapHomeScreen = ({ navigation }: any) => {
       case 'medium':
         return '#F59E0B'; // Orange
       case 'low':
-        return '#FBB F24'; // Yellow
+        return '#FBFB24'; // Yellow
       default:
         return '#9CA3AF'; // Gray
     }
@@ -396,6 +565,35 @@ const MapHomeScreen = ({ navigation }: any) => {
               </Marker>
             ))}
 
+          {/* Route Polyline */}
+          {showingRoute && routeCoordinates.length > 0 && (
+            <>
+              <Polyline
+                key="route-polyline"
+                coordinates={routeCoordinates}
+                strokeColor="#3B82F6"
+                strokeWidth={4}
+                lineDashPattern={[0]}
+              />
+              
+              {/* Starting Point Marker (User Location) */}
+              {userLocation && (
+                <Marker
+                  key="user-location-marker"
+                  coordinate={userLocation}
+                  title="Your Location"
+                  description="Starting point"
+                >
+                  <View style={styles.userLocationMarker}>
+                    <View style={styles.userLocationInner}>
+                      <Text style={styles.userLocationText}>📍</Text>
+                    </View>
+                  </View>
+                </Marker>
+              )}
+            </>
+          )}
+
           {/* Barangay Center Marker */}
           <Marker
             coordinate={BARANGAY_LALAAN_2}
@@ -420,24 +618,30 @@ const MapHomeScreen = ({ navigation }: any) => {
               </Text>
             </View>
           </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('FriendRequests')}
-          >
-            <Text style={styles.actionIcon}>👥</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Recenter Button */}
         <TouchableOpacity style={styles.recenterButton} onPress={recenterMap}>
-          <Text style={styles.recenterIcon}>🎯</Text>
+          <Text style={styles.recenterIcon}>{showingRoute ? '✕' : '🎯'}</Text>
         </TouchableOpacity>
 
         {/* Location Badge */}
-        <View style={styles.locationBadge}>
-          <Text style={styles.locationBadgeText}>📍 Barangay Lalaan 2</Text>
-        </View>
+        <TouchableOpacity 
+          style={styles.locationBadge}
+          onPress={refreshLocation}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.locationBadgeText}>
+            {showingRoute 
+              ? '🗺️ Route Active' 
+              : userLocation 
+                ? '📍 Barangay Lalaan 2' 
+                : '📍 Getting Location...'}
+          </Text>
+          {!userLocation && !showingRoute && (
+            <Text style={styles.locationSubtext}>Tap to refresh</Text>
+          )}
+        </TouchableOpacity>
 
         {/* Risk Legend */}
         <View style={styles.riskLegend}>
@@ -665,6 +869,7 @@ const MapHomeScreen = ({ navigation }: any) => {
         visible={selectedCenter !== null}
         center={selectedCenter}
         onClose={() => setSelectedCenter(null)}
+        onShowRoute={handleShowRoute}
       />
     </SafeAreaView>
   );
@@ -754,6 +959,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#1E293B',
+  },
+  locationSubtext: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 2,
   },
   riskLegend: {
     position: 'absolute',
@@ -876,6 +1086,28 @@ const styles = StyleSheet.create({
   },
   evacuationIconText: {
     fontSize: 24,
+  },
+  userLocationMarker: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  userLocationInner: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#3B82F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    shadowColor: '#3B82F6',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  userLocationText: {
+    fontSize: 20,
   },
   bottomSheet: {
     backgroundColor: '#FFFFFF',

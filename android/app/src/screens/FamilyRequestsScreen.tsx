@@ -15,21 +15,23 @@ import { getAuth } from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
 import { colors } from '../config/colors';
 
-interface FriendRequest {
+interface FamilyRequest {
   id: string;
   fromUserId: string;
   fromUserName: string;
   fromUserEmail: string;
   toUserId: string;
+  relationship: string;
   nickname?: string;
+  phoneNumber?: string;
   status: 'pending' | 'accepted' | 'rejected';
   createdAt: any;
 }
 
-const FriendRequestsScreen = ({ navigation }: any) => {
+const FamilyRequestsScreen = ({ navigation }: any) => {
   const authInstance = getAuth();
   const user = authInstance.currentUser;
-  const [requests, setRequests] = useState<FriendRequest[]>([]);
+  const [requests, setRequests] = useState<FamilyRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,19 +40,19 @@ const FriendRequestsScreen = ({ navigation }: any) => {
       return;
     }
 
-    // Listen to friend requests in real-time
+    // Listen to family requests in real-time
     const unsubscribe = firestore()
-      .collection('friend_requests')
+      .collection('family_requests')
       .where('toUserId', '==', user.uid)
       .where('status', '==', 'pending')
       .onSnapshot(
         (snapshot) => {
-          const pendingRequests: FriendRequest[] = [];
+          const pendingRequests: FamilyRequest[] = [];
           snapshot.forEach((doc) => {
             pendingRequests.push({
               id: doc.id,
               ...doc.data(),
-            } as FriendRequest);
+            } as FamilyRequest);
           });
           
           // Sort in JavaScript instead of Firestore
@@ -64,10 +66,10 @@ const FriendRequestsScreen = ({ navigation }: any) => {
           setLoading(false);
         },
         (error) => {
-          console.error('Error fetching friend requests:', error);
+          console.error('Error fetching family requests:', error);
           Alert.alert(
             'Database Error',
-            'Failed to load friend requests. Please try again later.',
+            'Failed to load family requests. Please try again later.',
             [{ text: 'OK' }]
           );
           setLoading(false);
@@ -77,46 +79,53 @@ const FriendRequestsScreen = ({ navigation }: any) => {
     return () => unsubscribe();
   }, [user]);
 
-  const acceptRequest = async (request: FriendRequest) => {
+  const acceptRequest = async (request: FamilyRequest) => {
     try {
-      // Create friend relationship (bidirectional)
+      // Create family relationship (bidirectional)
       const batch = firestore().batch();
 
-      // Add friend for current user
-      const friend1Ref = firestore()
-        .collection('friends')
+      // Add family member for current user
+      const family1Ref = firestore()
+        .collection('family')
         .doc(user!.uid)
-        .collection('userFriends')
+        .collection('userFamily')
         .doc(request.fromUserId);
 
-      batch.set(friend1Ref, {
+      batch.set(family1Ref, {
         userId: request.fromUserId,
         userName: request.fromUserName,
         userEmail: request.fromUserEmail,
+        relationship: request.relationship,
         nickname: request.nickname || null,
+        phoneNumber: request.phoneNumber || null,
         canTrack: true,
         addedAt: firestore.FieldValue.serverTimestamp(),
       });
 
-      // Add friend for requester
-      const friend2Ref = firestore()
-        .collection('friends')
+      // Determine reciprocal relationship
+      const reciprocalRelationship = getReciprocalRelationship(request.relationship);
+
+      // Add family member for requester
+      const family2Ref = firestore()
+        .collection('family')
         .doc(request.fromUserId)
-        .collection('userFriends')
+        .collection('userFamily')
         .doc(user!.uid);
 
-      batch.set(friend2Ref, {
+      batch.set(family2Ref, {
         userId: user!.uid,
         userName: user!.displayName || 'User',
         userEmail: user!.email || '',
-        nickname: null, // Requester didn't set a nickname for current user
+        relationship: reciprocalRelationship,
+        nickname: null,
+        phoneNumber: null,
         canTrack: true,
         addedAt: firestore.FieldValue.serverTimestamp(),
       });
 
       // Update request status
       const requestRef = firestore()
-        .collection('friend_requests')
+        .collection('family_requests')
         .doc(request.id);
 
       batch.update(requestRef, {
@@ -128,9 +137,9 @@ const FriendRequestsScreen = ({ navigation }: any) => {
       const notificationRef = firestore().collection('notifications').doc();
       batch.set(notificationRef, {
         userId: request.fromUserId,
-        type: 'friend_accepted',
-        title: 'Friend Request Accepted',
-        message: `${user!.displayName || 'Someone'} accepted your friend request`,
+        type: 'family_accepted',
+        title: 'Family Request Accepted',
+        message: `${user!.displayName || 'Someone'} accepted your family request`,
         fromUserId: user!.uid,
         fromUserName: user!.displayName || 'User',
         read: false,
@@ -141,13 +150,13 @@ const FriendRequestsScreen = ({ navigation }: any) => {
 
       const displayName = request.nickname || request.fromUserName;
       Alert.alert(
-        'Friend Added',
-        `${displayName} is now your friend!`,
+        'Family Member Added',
+        `${displayName} is now in your family contacts!`,
         [{ text: 'OK' }]
       );
     } catch (error) {
-      console.error('Error accepting friend request:', error);
-      Alert.alert('Error', 'Failed to accept friend request. Please try again.');
+      console.error('Error accepting family request:', error);
+      Alert.alert('Error', 'Failed to accept family request. Please try again.');
     }
   };
 
@@ -155,7 +164,7 @@ const FriendRequestsScreen = ({ navigation }: any) => {
     const displayName = nickname || userName;
     Alert.alert(
       'Reject Request',
-      `Are you sure you want to reject ${displayName}'s friend request?`,
+      `Are you sure you want to reject ${displayName}'s family request?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -164,7 +173,7 @@ const FriendRequestsScreen = ({ navigation }: any) => {
           onPress: async () => {
             try {
               await firestore()
-                .collection('friend_requests')
+                .collection('family_requests')
                 .doc(requestId)
                 .update({
                   status: 'rejected',
@@ -173,12 +182,12 @@ const FriendRequestsScreen = ({ navigation }: any) => {
 
               Alert.alert(
                 'Request Rejected',
-                'Friend request has been rejected.',
+                'Family request has been rejected.',
                 [{ text: 'OK' }]
               );
             } catch (error) {
-              console.error('Error rejecting friend request:', error);
-              Alert.alert('Error', 'Failed to reject friend request. Please try again.');
+              console.error('Error rejecting family request:', error);
+              Alert.alert('Error', 'Failed to reject family request. Please try again.');
             }
           },
         },
@@ -186,17 +195,49 @@ const FriendRequestsScreen = ({ navigation }: any) => {
     );
   };
 
+  const getReciprocalRelationship = (relationship: string): string => {
+    const reciprocalMap: { [key: string]: string } = {
+      'Parent': 'Child',
+      'Child': 'Parent',
+      'Sibling': 'Sibling',
+      'Spouse': 'Spouse',
+      'Grandparent': 'Grandchild',
+      'Grandchild': 'Grandparent',
+      'Aunt/Uncle': 'Niece/Nephew',
+      'Cousin': 'Cousin',
+      'Other': 'Other',
+    };
+
+    return reciprocalMap[relationship] || 'Other';
+  };
+
+  const getRelationshipEmoji = (relationship: string): string => {
+    const emojiMap: { [key: string]: string } = {
+      'Parent': '👨‍👩',
+      'Child': '👶',
+      'Sibling': '👫',
+      'Spouse': '💑',
+      'Grandparent': '👴👵',
+      'Grandchild': '👧👦',
+      'Aunt/Uncle': '👨‍👩',
+      'Cousin': '👥',
+      'Other': '👤',
+    };
+
+    return emojiMap[relationship] || '👤';
+  };
+
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
-      <Text style={styles.emptyIcon}>👥</Text>
-      <Text style={styles.emptyTitle}>No Friend Requests</Text>
+      <Text style={styles.emptyIcon}>👨‍👩‍👧‍👦</Text>
+      <Text style={styles.emptyTitle}>No Family Requests</Text>
       <Text style={styles.emptyText}>
-        You don't have any pending friend requests
+        You don't have any pending family requests
       </Text>
     </View>
   );
 
-  const renderRequest = ({ item }: { item: FriendRequest }) => {
+  const renderRequest = ({ item }: { item: FamilyRequest }) => {
     const displayName = item.nickname || item.fromUserName;
     
     return (
@@ -220,7 +261,15 @@ const FriendRequestsScreen = ({ navigation }: any) => {
               <Text style={styles.realName}>Real name: {item.fromUserName}</Text>
             )}
             <Text style={styles.email}>{item.fromUserEmail}</Text>
-            <Text style={styles.text}>wants to track your location</Text>
+            <View style={styles.relationshipBadge}>
+              <Text style={styles.relationshipEmoji}>
+                {getRelationshipEmoji(item.relationship)}
+              </Text>
+              <Text style={styles.relationshipLabel}>{item.relationship}</Text>
+            </View>
+            {item.phoneNumber && (
+              <Text style={styles.phone}>📞 {item.phoneNumber}</Text>
+            )}
           </View>
         </View>
 
@@ -248,7 +297,7 @@ const FriendRequestsScreen = ({ navigation }: any) => {
       <SafeAreaView style={styles.container} edges={['top']}>
         <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#3B82F6" />
+          <ActivityIndicator size="large" color="#10B981" />
           <Text style={styles.loadingText}>Loading requests...</Text>
         </View>
       </SafeAreaView>
@@ -268,7 +317,7 @@ const FriendRequestsScreen = ({ navigation }: any) => {
           <Text style={styles.backIcon}>←</Text>
         </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>Friend Requests</Text>
+        <Text style={styles.headerTitle}>Family Requests</Text>
 
         <View style={styles.placeholder} />
       </View>
@@ -349,7 +398,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#3B82F6',
+    backgroundColor: '#10B981',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -375,7 +424,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   nicknameBadge: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: '#DCFCE7',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 8,
@@ -383,7 +432,7 @@ const styles = StyleSheet.create({
   nicknameBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#1E40AF',
+    color: '#166534',
   },
   realName: {
     fontSize: 12,
@@ -393,11 +442,31 @@ const styles = StyleSheet.create({
   email: {
     fontSize: 13,
     color: '#64748B',
+    marginBottom: 6,
+  },
+  relationshipBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
     marginBottom: 4,
   },
-  text: {
-    fontSize: 13,
+  relationshipEmoji: {
+    fontSize: 12,
+    marginRight: 4,
+  },
+  relationshipLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  phone: {
+    fontSize: 12,
     color: '#64748B',
+    marginTop: 2,
   },
   actions: {
     flexDirection: 'row',
@@ -448,4 +517,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default FriendRequestsScreen;
+export default FamilyRequestsScreen;

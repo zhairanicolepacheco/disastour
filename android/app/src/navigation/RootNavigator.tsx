@@ -5,6 +5,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { ActivityIndicator, View } from 'react-native';
 import { getAuth, onAuthStateChanged } from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
 import { colors } from '../config/colors';
 
 import GetStartedScreen from '../screens/GetStartedScreen';
@@ -19,6 +20,7 @@ import HotlineScreen from '../screens/HotlineScreen';
 import CheckInScreen from '../screens/CheckInScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import FriendRequestsScreen from '../screens/FriendRequestsScreen';
+import FamilyRequestsScreen from '../screens/FamilyRequestsScreen';
 
 export type RootStackParamList = {
   GetStarted: undefined;
@@ -33,6 +35,7 @@ export type RootStackParamList = {
   CheckIn: undefined;
   Notifications: undefined;
   FriendRequests: undefined;
+  FamilyRequests: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -40,18 +43,51 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 export const RootNavigator = () => {
   const [initializing, setInitializing] = useState(true);
   const [user, setUser] = useState<any>(null);
+  const [hasProfile, setHasProfile] = useState<boolean | null>(null);
 
   useEffect(() => {
     const authInstance = getAuth();
-    const subscriber = onAuthStateChanged(authInstance, user => {
+    const subscriber = onAuthStateChanged(authInstance, async (user) => {
       setUser(user);
+
+      if (user && user.emailVerified) {
+        // Check if user has completed profile
+        try {
+          const userDoc = await firestore()
+            .collection('users')
+            .doc(user.uid)
+            .get();
+
+          const userData = userDoc.data();
+          
+          // Check if profile is complete (has displayName and at least some profile data)
+          const profileComplete = userData && 
+            userData.displayName && 
+            userData.displayName.trim() !== '';
+
+          setHasProfile(profileComplete);
+          
+          console.log('User profile check:', {
+            uid: user.uid,
+            emailVerified: user.emailVerified,
+            displayName: userData?.displayName,
+            profileComplete
+          });
+        } catch (error) {
+          console.error('Error checking user profile:', error);
+          setHasProfile(false);
+        }
+      } else {
+        setHasProfile(null);
+      }
+
       setInitializing(false);
     });
 
     return subscriber;
   }, []);
 
-  if (initializing) {
+  if (initializing || (user && user.emailVerified && hasProfile === null)) {
     return (
       <View
         style={{
@@ -70,20 +106,22 @@ export const RootNavigator = () => {
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {user == null || !user.emailVerified ? (
+          // Not logged in or email not verified
           <>
             <Stack.Screen name="GetStarted" component={GetStartedScreen} />
             <Stack.Screen name="SignUp" component={SignUpScreen} />
             <Stack.Screen name="SignIn" component={SignInScreen} />
           </>
-        ) : !user.displayName || user.displayName === '' ? (
+        ) : !hasProfile ? (
+          // Email verified but profile incomplete - force ProfileDetailsScreen
           <>
-            {/* ✅ Email verified but profile incomplete - show ProfileDetailsScreen first */}
             <Stack.Screen
               name="ProfileDetails"
               component={ProfileDetailsScreen}
               initialParams={{ userId: user.uid }}
+              options={{ gestureEnabled: false }}
             />
-            {/* ✅ Hidden screens for navigation after profile completion */}
+            {/* Hidden screens for navigation after profile completion */}
             <Stack.Screen name="Home" component={MapHomeScreen} />
             <Stack.Screen name="MapHome" component={MapHomeScreen} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
@@ -92,10 +130,11 @@ export const RootNavigator = () => {
             <Stack.Screen name="CheckIn" component={CheckInScreen} />
             <Stack.Screen name="Notifications" component={NotificationsScreen} />
             <Stack.Screen name="FriendRequests" component={FriendRequestsScreen} />
+            <Stack.Screen name="FamilyRequests" component={FamilyRequestsScreen} />
           </>
         ) : (
+          // Email verified + profile complete - full app access
           <>
-            {/* ✅ Email verified + profile complete - go directly to Home */}
             <Stack.Screen name="Home" component={MapHomeScreen} />
             <Stack.Screen name="MapHome" component={MapHomeScreen} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
@@ -105,6 +144,7 @@ export const RootNavigator = () => {
             <Stack.Screen name="CheckIn" component={CheckInScreen} />
             <Stack.Screen name="Notifications" component={NotificationsScreen} />
             <Stack.Screen name="FriendRequests" component={FriendRequestsScreen} />
+            <Stack.Screen name="FamilyRequests" component={FamilyRequestsScreen} />
           </>
         )}
       </Stack.Navigator>

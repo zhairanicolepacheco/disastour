@@ -127,14 +127,14 @@ const ProfileScreen = ({ navigation }: any) => {
 
   const handleFamilySubmit = (data: FamilyMemberData) => {
     console.log('Family member added:', data);
-    Alert.alert('Success', `${data.name} has been added to your family contacts`);
+    Alert.alert('Success', `${data.nickname} has been added to your family contacts`);
     setShowAddFamilyModal(false);
     // TODO: Add to database/state
   };
 
   const handleFriendSubmit = (data: FriendData) => {
     console.log('Friend added:', data);
-    Alert.alert('Success', `Request sent to ${data.name}`);
+    Alert.alert('Success', `Request sent to ${data.nickname}`);
     setShowAddFriendModal(false);
     // TODO: Add to database/state
   };
