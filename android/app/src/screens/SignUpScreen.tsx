@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { getAuth, onAuthStateChanged } from '@react-native-firebase/auth';
+import { getAuth } from '@react-native-firebase/auth';
 import { RootStackParamList } from '../navigation/RootNavigator';
 import { authService } from '../services/authService';
 import { colors } from '../config/colors';
@@ -33,36 +33,83 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
   const [checkingNow, setCheckingNow] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Aggressive polling for email verification
   useEffect(() => {
-    const authInstance = getAuth();
-    const subscriber = onAuthStateChanged(authInstance, user => {
-      setCurrentUser(user);
-    });
-    return subscriber;
-  }, []);
-
-  // Poll for email verification status
-  useEffect(() => {
-    if (!emailSent || !currentUser) return;
+    if (!emailSent) return;
 
     let intervalId: ReturnType<typeof setInterval>;
+    let attempts = 0;
+    const maxAttempts = 120; // 6 minutes
 
     const checkVerification = async () => {
       try {
+        attempts++;
+        console.log(`🔄 Checking verification (attempt ${attempts})...`);
+
         const result = await authService.checkEmailVerified();
+        
         if (result.verified) {
-          Alert.alert(
-            'Email Verified! ✅',
-            'Your email has been verified. You can now complete your profile.',
-            [
-              {
-                text: 'Continue',
-                onPress: () => {
-                  // Auth state will automatically update and navigate
-                },
-              },
-            ],
-          );
+          console.log('✅ EMAIL VERIFIED!');
+          
+          // Stop polling
+          if (intervalId) clearInterval(intervalId);
+          
+          // Force sign out and back in to refresh auth state
+          const authInstance = getAuth();
+          const currentUser = authInstance.currentUser;
+          
+          if (currentUser) {
+            Alert.alert(
+              'Email Verified! ✅',
+              'Your email has been verified successfully. Please wait while we redirect you...',
+              [{ text: 'OK' }]
+            );
+
+            // Small delay to let the user see the alert
+            setTimeout(async () => {
+              try {
+                // Sign out
+                await authService.signOut();
+                
+                // Sign back in to trigger navigation with fresh emailVerified status
+                const signInResult = await authService.signIn(
+                  currentUser.email || email,
+                  password
+                );
+                
+                if (signInResult.success) {
+                  console.log('✅ Signed back in successfully');
+                  // Navigation will happen automatically via RootNavigator
+                } else {
+                  // If sign-in fails, just let the user know to sign in manually
+                  Alert.alert(
+                    'Success!',
+                    'Your email is verified! Please sign in to continue.',
+                    [
+                      {
+                        text: 'Sign In',
+                        onPress: () => navigation.navigate('SignIn'),
+                      },
+                    ]
+                  );
+                }
+              } catch (error) {
+                console.error('Error during sign-in after verification:', error);
+                Alert.alert(
+                  'Success!',
+                  'Your email is verified! Please sign in to continue.',
+                  [
+                    {
+                      text: 'Sign In',
+                      onPress: () => navigation.navigate('SignIn'),
+                    },
+                  ]
+                );
+              }
+            }, 1000);
+          }
+        } else if (attempts >= maxAttempts) {
+          console.log('⏱️ Max attempts reached');
           if (intervalId) clearInterval(intervalId);
         }
       } catch (error) {
@@ -70,14 +117,16 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
       }
     };
 
-    // Check every 3 seconds
+    // Initial check after 2 seconds
+    setTimeout(checkVerification, 2000);
+
+    // Then check every 3 seconds
     intervalId = setInterval(checkVerification, 3000);
 
-    // Cleanup interval on unmount
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [emailSent, currentUser]);
+  }, [emailSent, email, password, navigation]);
 
   const validateInputs = () => {
     if (!email.trim()) {
@@ -110,6 +159,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
       Alert.alert(
         'Success',
         'Verification email sent! Please check your inbox and click the verification link.',
+        [{ text: 'OK' }]
       );
     } else {
       Alert.alert('Sign Up Failed', result?.error || 'An error occurred');
@@ -121,45 +171,74 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
     setLoading(true);
     const result = await authService.resendVerificationEmail();
     if (result && result.success) {
-      Alert.alert('Success', 'Verification email resent!');
+      Alert.alert('Success', 'Verification email resent! Please check your inbox.');
     } else {
       Alert.alert('Error', result?.error || 'An error occurred');
     }
     setLoading(false);
   };
 
-  const handleCheckVerification = async () => {
-    setCheckingVerification(true);
+  const handleManualCheck = async () => {
+    setCheckingNow(true);
     try {
       const result = await authService.checkEmailVerified();
-
+      
       if (result.verified) {
+        const authInstance = getAuth();
+        const currentUser = authInstance.currentUser;
+        
         Alert.alert(
           'Email Verified! ✅',
-          'Your email has been verified. You can now complete your profile.',
-          [
-            {
-              text: 'Continue',
-              onPress: () => {
-                // Auth state will automatically update and navigate
-              },
-            },
-          ],
+          'Your email has been verified successfully. Signing you in...',
+          [{ text: 'OK' }]
         );
+
+        // Sign out and back in to refresh state
+        setTimeout(async () => {
+          try {
+            await authService.signOut();
+            const signInResult = await authService.signIn(
+              currentUser?.email || email,
+              password
+            );
+            
+            if (!signInResult.success) {
+              Alert.alert(
+                'Success!',
+                'Your email is verified! Please sign in to continue.',
+                [
+                  {
+                    text: 'Sign In',
+                    onPress: () => navigation.navigate('SignIn'),
+                  },
+                ]
+              );
+            }
+          } catch (error) {
+            console.error('Error during manual check sign-in:', error);
+            Alert.alert(
+              'Success!',
+              'Your email is verified! Please sign in to continue.',
+              [
+                {
+                  text: 'Sign In',
+                  onPress: () => navigation.navigate('SignIn'),
+                },
+              ]
+            );
+          }
+        }, 500);
       } else {
         Alert.alert(
           'Not Verified Yet',
-          'Your email is not verified yet. Please check your inbox and click the verification link.',
-          [{ text: 'OK' }],
+          'Your email is not verified yet. Please:\n\n1. Check your email inbox (and spam folder)\n2. Click the verification link\n3. Wait a moment and try again',
+          [{ text: 'OK' }]
         );
       }
     } catch (error: any) {
-      Alert.alert(
-        'Error',
-        error.message || 'Failed to check verification status',
-      );
+      Alert.alert('Error', error.message || 'Failed to check verification status');
     } finally {
-      setCheckingVerification(false);
+      setCheckingNow(false);
     }
   };
 
@@ -176,7 +255,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
 
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView
+        <ScrollView 
           contentContainerStyle={styles.scrollContent}
           refreshControl={
             <RefreshControl
@@ -190,8 +269,13 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
           }
         >
           <View style={styles.content}>
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
+            <TouchableOpacity 
+              onPress={() => {
+                setEmailSent(false);
+                setEmail('');
+                setPassword('');
+                setConfirmPassword('');
+              }}
               style={styles.backButton}
             >
               <Text style={styles.backButtonText}>← Back</Text>
@@ -200,27 +284,26 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
             <View style={styles.verificationSection}>
               <View style={styles.iconContainer}>
                 <View style={styles.iconCircle}>
-                  <Text style={styles.icon}>✓</Text>
+                  <Text style={styles.icon}>📧</Text>
                 </View>
               </View>
-
+              
               <Text style={styles.verificationTitle}>Check Your Email</Text>
               <Text style={styles.verificationSubtitle}>
                 We sent a verification link to
               </Text>
               <View style={styles.emailBadge}>
-                <Text style={styles.emailText}>{currentUser.email}</Text>
+                <Text style={styles.emailText}>{displayEmail}</Text>
               </View>
 
               <View style={styles.instructionCard}>
                 <Text style={styles.instructionText}>
-                  Click the link in your email to verify your account and start
-                  using Disastour.
+                  Click the link in your email to verify your account. Once verified, you'll automatically be signed in and redirected.
                 </Text>
               </View>
 
               <View style={styles.steps}>
-                <Step number="1" text="Check your email inbox" />
+                <Step number="1" text="Check your email inbox (and spam folder)" />
                 <Step number="2" text="Click the verification link" />
                 <Step number="3" text="Wait for automatic sign-in" />
               </View>
@@ -234,17 +317,15 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
 
               <TouchableOpacity
                 style={styles.checkButton}
-                onPress={handleCheckVerification}
-                disabled={checkingVerification}
+                onPress={handleManualCheck}
+                disabled={checkingNow}
               >
-                {checkingVerification ? (
+                {checkingNow ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <>
-                    {/* <Text style={styles.checkButtonIcon}>✅</Text> */}
-                    <Text style={styles.checkButtonText}>
-                      I've Verified My Email
-                    </Text>
+                    <Text style={styles.checkButtonIcon}>🔄</Text>
+                    <Text style={styles.checkButtonText}>Check Verification Status</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -258,18 +339,26 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                   <ActivityIndicator color="#3B82F6" />
                 ) : (
                   <>
-                    {/* <Text style={styles.resendButtonIcon}>🔄</Text> */}
-                    <Text style={styles.resendButtonText}>
-                      Resend Verification Email
-                    </Text>
+                    <Text style={styles.resendButtonIcon}>📨</Text>
+                    <Text style={styles.resendButtonText}>Resend Verification Email</Text>
                   </>
                 )}
               </TouchableOpacity>
 
               <View style={styles.autoCheckNotice}>
-                <Text style={styles.autoCheckIcon}>⏱️</Text>
+                <ActivityIndicator size="small" color="#92400E" style={{ marginRight: 8 }} />
                 <Text style={styles.autoCheckText}>
-                  We're automatically checking for verification...
+                  Checking verification status automatically...
+                </Text>
+              </View>
+
+              <View style={styles.helpCard}>
+                <Text style={styles.helpTitle}>💡 Didn't receive the email?</Text>
+                <Text style={styles.helpText}>
+                  • Check your spam/junk folder{'\n'}
+                  • Make sure the email address is correct{'\n'}
+                  • Click "Resend" to get a new verification email{'\n'}
+                  • Wait a few minutes and check again
                 </Text>
               </View>
             </View>
@@ -281,7 +370,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />      
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.container}
@@ -493,8 +582,6 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 40,
-    color: '#FFFFFF',
-    fontWeight: '700',
   },
   verificationTitle: {
     fontSize: 32,
@@ -588,13 +675,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   checkButton: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: '#10B981',
     paddingVertical: 18,
     borderRadius: 12,
     alignItems: 'center',
     width: '100%',
     marginBottom: 12,
-    shadowColor: '#3B82F6',
+    shadowColor: '#10B981',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
@@ -622,6 +709,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 8,
+    marginBottom: 20,
   },
   resendButtonIcon: {
     fontSize: 16,
@@ -634,20 +722,35 @@ const styles = StyleSheet.create({
   autoCheckNotice: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 24,
     paddingVertical: 12,
     paddingHorizontal: 16,
     backgroundColor: '#FEF3C7',
     borderRadius: 8,
-  },
-  autoCheckIcon: {
-    fontSize: 16,
+    marginBottom: 20,
   },
   autoCheckText: {
     fontSize: 13,
     color: '#92400E',
     fontWeight: '500',
+  },
+  helpCard: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 20,
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  helpTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 12,
+  },
+  helpText: {
+    fontSize: 14,
+    color: '#64748B',
+    lineHeight: 22,
   },
 });
 

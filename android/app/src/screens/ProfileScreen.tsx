@@ -21,12 +21,8 @@ import { colors } from '../config/colors';
 
 // Import modals
 import AddContactModal from '../components/modals/AddContactModal';
-import AddFamilyModal, {
-  FamilyMemberData,
-} from '../components/modals/AddFamilyModal';
-import AddFriendModal, {
-  FriendData,
-} from '../components/modals/AddFriendModal';
+import AddFamilyModal, { FamilyMemberData } from '../components/modals/AddFamilyModal';
+import AddFriendModal, { FriendData } from '../components/modals/AddFriendModal';
 
 interface FamilyMember {
   id: string;
@@ -73,7 +69,10 @@ const ProfileScreen = ({ navigation }: any) => {
     }
 
     try {
-      const userDoc = await firestore().collection('users').doc(user.uid).get();
+      const userDoc = await firestore()
+        .collection('users')
+        .doc(user.uid)
+        .get();
 
       if (userDoc.exists()) {
         const data = userDoc.data();
@@ -121,9 +120,9 @@ const ProfileScreen = ({ navigation }: any) => {
       .doc(user.uid)
       .collection('userFamily')
       .onSnapshot(
-        snapshot => {
+        (snapshot) => {
           const members: FamilyMember[] = [];
-          snapshot.forEach(doc => {
+          snapshot.forEach((doc) => {
             const data = doc.data();
             members.push({
               id: doc.id,
@@ -135,9 +134,9 @@ const ProfileScreen = ({ navigation }: any) => {
           });
           setFamilyMembers(members);
         },
-        error => {
+        (error) => {
           console.error('Error loading family members:', error);
-        },
+        }
       );
 
     return unsubscribe;
@@ -155,9 +154,9 @@ const ProfileScreen = ({ navigation }: any) => {
       .doc(user.uid)
       .collection('userFriends')
       .onSnapshot(
-        snapshot => {
+        (snapshot) => {
           const friendsList: Friend[] = [];
-          snapshot.forEach(doc => {
+          snapshot.forEach((doc) => {
             const data = doc.data();
             friendsList.push({
               id: doc.id,
@@ -168,9 +167,9 @@ const ProfileScreen = ({ navigation }: any) => {
           });
           setFriends(friendsList);
         },
-        error => {
+        (error) => {
           console.error('Error loading friends:', error);
-        },
+        }
       );
 
     return unsubscribe;
@@ -190,7 +189,7 @@ const ProfileScreen = ({ navigation }: any) => {
   useFocusEffect(
     React.useCallback(() => {
       loadUserProfile();
-    }, []),
+    }, [])
   );
 
   const onRefresh = async () => {
@@ -223,16 +222,20 @@ const ProfileScreen = ({ navigation }: any) => {
   };
 
   const handleSignOut = async () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          await authService.signOut();
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            await authService.signOut();
+          },
         },
-      },
-    ]);
+      ]
+    );
   };
 
   if (loading) {
@@ -250,7 +253,7 @@ const ProfileScreen = ({ navigation }: any) => {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      <ScrollView
+      <ScrollView 
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl
@@ -263,7 +266,7 @@ const ProfileScreen = ({ navigation }: any) => {
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity
+          <TouchableOpacity 
             style={styles.backButton}
             onPress={() => navigation.goBack()}
           >
@@ -272,7 +275,7 @@ const ProfileScreen = ({ navigation }: any) => {
 
           <Text style={styles.headerTitle}>Profile</Text>
 
-          <TouchableOpacity
+          <TouchableOpacity 
             style={styles.editButton}
             onPress={() => navigation.navigate('EditProfile')}
           >
@@ -283,8 +286,8 @@ const ProfileScreen = ({ navigation }: any) => {
         {/* Profile Avatar */}
         <View style={styles.avatarSection}>
           {userProfile?.photoURL ? (
-            <Image
-              source={{ uri: userProfile.photoURL }}
+            <Image 
+              source={{ uri: userProfile.photoURL }} 
               style={styles.avatarLarge}
             />
           ) : (
@@ -325,12 +328,7 @@ const ProfileScreen = ({ navigation }: any) => {
 
           <View style={styles.detailCard}>
             <Text style={styles.detailLabel}>Address</Text>
-            <Text
-              style={[
-                styles.detailValue,
-                !userProfile?.address && styles.detailValueEmpty,
-              ]}
-            >
+            <Text style={[styles.detailValue, !userProfile?.address && styles.detailValueEmpty]}>
               {userProfile?.address || 'Not set'}
             </Text>
           </View>
@@ -338,7 +336,7 @@ const ProfileScreen = ({ navigation }: any) => {
 
         {/* Family Section */}
         <View style={styles.section}>
-          <TouchableOpacity
+          <TouchableOpacity 
             style={styles.sectionHeader}
             onPress={() => setShowFamily(!showFamily)}
           >
@@ -352,22 +350,19 @@ const ProfileScreen = ({ navigation }: any) => {
             <View style={styles.contactsList}>
               {familyMembers.length === 0 ? (
                 <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateText}>
-                    No family members yet
-                  </Text>
+                  <Text style={styles.emptyStateText}>No family members yet</Text>
                   <Text style={styles.emptyStateSubtext}>
                     Tap the + button to add family
                   </Text>
                 </View>
               ) : (
                 familyMembers.map(member => {
-                  const displayText =
-                    member.nickname || member.displayName || 'Unknown';
+                  const displayText = member.nickname || member.displayName || 'Unknown';
                   return (
                     <View key={member.id} style={styles.contactCard}>
                       {member.photoURL ? (
-                        <Image
-                          source={{ uri: member.photoURL }}
+                        <Image 
+                          source={{ uri: member.photoURL }} 
                           style={styles.contactAvatar}
                         />
                       ) : (
@@ -378,7 +373,9 @@ const ProfileScreen = ({ navigation }: any) => {
                         </View>
                       )}
                       <View style={styles.contactInfo}>
-                        <Text style={styles.contactName}>{displayText}</Text>
+                        <Text style={styles.contactName}>
+                          {displayText}
+                        </Text>
                         <Text style={styles.contactRelationship}>
                           {member.relationship}
                         </Text>
@@ -393,11 +390,13 @@ const ProfileScreen = ({ navigation }: any) => {
 
         {/* Friends Section */}
         <View style={styles.section}>
-          <TouchableOpacity
+          <TouchableOpacity 
             style={styles.sectionHeader}
             onPress={() => setShowFriends(!showFriends)}
           >
-            <Text style={styles.sectionTitle}>Friends ({friends.length})</Text>
+            <Text style={styles.sectionTitle}>
+              Friends ({friends.length})
+            </Text>
             <Text style={styles.collapseIcon}>{showFriends ? '▼' : '▶'}</Text>
           </TouchableOpacity>
 
@@ -412,13 +411,12 @@ const ProfileScreen = ({ navigation }: any) => {
                 </View>
               ) : (
                 friends.map(friend => {
-                  const displayText =
-                    friend.nickname || friend.displayName || 'Unknown';
+                  const displayText = friend.nickname || friend.displayName || 'Unknown';
                   return (
                     <View key={friend.id} style={styles.contactCard}>
                       {friend.photoURL ? (
-                        <Image
-                          source={{ uri: friend.photoURL }}
+                        <Image 
+                          source={{ uri: friend.photoURL }} 
                           style={styles.contactAvatar}
                         />
                       ) : (
@@ -429,7 +427,9 @@ const ProfileScreen = ({ navigation }: any) => {
                         </View>
                       )}
                       <View style={styles.contactInfo}>
-                        <Text style={styles.contactName}>{displayText}</Text>
+                        <Text style={styles.contactName}>
+                          {displayText}
+                        </Text>
                       </View>
                     </View>
                   );
@@ -440,30 +440,33 @@ const ProfileScreen = ({ navigation }: any) => {
         </View>
 
         {/* Sign Out Button */}
-        <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
+        <TouchableOpacity 
+          style={styles.signOutButton}
+          onPress={handleSignOut}
+        >
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
 
       {/* Bottom Navigation */}
       <View style={styles.bottomNav}>
-        <TouchableOpacity
-          style={styles.navItem}
+        <TouchableOpacity 
+          style={styles.navItem} 
           onPress={() => navigation.navigate('Hotline')}
         >
           <Text style={styles.navIcon}>📞</Text>
           <Text style={styles.navLabel}>Hotline</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.navItem}
+        <TouchableOpacity 
+          style={styles.navItem} 
           onPress={() => navigation.navigate('Home')}
         >
           <Text style={styles.navIcon}>📍</Text>
           <Text style={styles.navLabel}>Location</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
+        <TouchableOpacity 
           style={styles.navItemCenter}
           onPress={() => setShowAddModal(true)}
         >
@@ -472,16 +475,16 @@ const ProfileScreen = ({ navigation }: any) => {
           </View>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.navItem}
+        <TouchableOpacity 
+          style={styles.navItem} 
           onPress={() => navigation.navigate('CheckIn')}
         >
           <Text style={styles.navIcon}>✓</Text>
           <Text style={styles.navLabel}>Check-in</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.navItem}
+        <TouchableOpacity 
+          style={styles.navItem} 
           onPress={() => navigation.navigate('Notifications')}
         >
           <Text style={styles.navIcon}>🔔</Text>
