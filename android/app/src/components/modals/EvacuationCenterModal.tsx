@@ -22,12 +22,14 @@ interface EvacuationCenterModalProps {
   visible: boolean;
   center: EvacuationCenter | null;
   onClose: () => void;
+  onShowRoute?: (center: EvacuationCenter) => void;
 }
 
 const EvacuationCenterModal: React.FC<EvacuationCenterModalProps> = ({
   visible,
   center,
   onClose,
+  onShowRoute,
 }) => {
   if (!center) return null;
 
@@ -35,6 +37,13 @@ const EvacuationCenterModal: React.FC<EvacuationCenterModalProps> = ({
     const url = `https://www.google.com/maps/dir/?api=1&destination=${center.latitude},${center.longitude}`;
     Linking.openURL(url);
     onClose();
+  };
+
+  const handleShowRoute = () => {
+    if (onShowRoute) {
+      onShowRoute(center);
+      onClose();
+    }
   };
 
   const handleCheckIn = () => {
@@ -79,21 +88,29 @@ const EvacuationCenterModal: React.FC<EvacuationCenterModalProps> = ({
 
           <View style={styles.centerActions}>
             <TouchableOpacity
-              style={[styles.centerActionButton, styles.directionsButton]}
-              onPress={handleGetDirections}
+              style={[styles.centerActionButton, styles.routeButton]}
+              onPress={handleShowRoute}
             >
               <Text style={styles.centerActionIcon}>🗺️</Text>
-              <Text style={styles.centerActionText}>Get Directions</Text>
+              <Text style={styles.centerActionTextWhite}>Show Route</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.centerActionButton, styles.checkInButton]}
-              onPress={handleCheckIn}
+              style={[styles.centerActionButton, styles.directionsButton]}
+              onPress={handleGetDirections}
             >
-              <Text style={styles.centerActionIcon}>✓</Text>
-              <Text style={styles.centerActionTextWhite}>Check In Here</Text>
+              <Text style={styles.centerActionIcon}>📱</Text>
+              <Text style={styles.centerActionText}>Google Maps</Text>
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity
+            style={[styles.centerActionButton, styles.checkInButton, styles.fullWidthButton]}
+            onPress={handleCheckIn}
+          >
+            <Text style={styles.centerActionIcon}>✓</Text>
+            <Text style={styles.centerActionTextWhite}>Check In Here</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -166,68 +183,55 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'right',
   },
-  capacityInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  capacityIndicator: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  facilitiesSection: {
-    gap: 12,
-  },
-  facilitiesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  facilityChip: {
-    backgroundColor: '#DBEAFE',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#3B82F6',
-  },
-  facilityChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#3B82F6',
-  },
   centerActions: {
     flexDirection: 'row',
     gap: 12,
+    marginBottom: 16,
   },
   centerActionButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderRadius: 12,
     gap: 8,
   },
+  routeButton: {
+    backgroundColor: '#3B82F6',
+    shadowColor: '#3B82F6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
   directionsButton: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
     borderWidth: 2,
     borderColor: '#3B82F6',
   },
   checkInButton: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: '#10B981',
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  fullWidthButton: {
+    flex: 0,
+    width: '100%',
   },
   centerActionIcon: {
     fontSize: 18,
   },
   centerActionText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#3B82F6',
   },
   centerActionTextWhite: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
   },

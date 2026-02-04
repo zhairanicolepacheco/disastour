@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,8 +9,11 @@ import {
   Alert,
   StatusBar,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { getAuth } from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
 import { colors } from '../config/colors';
 
 // Import modals
@@ -20,19 +23,182 @@ import AddFriendModal, { FriendData } from '../components/modals/AddFriendModal'
 
 interface Notification {
   id: string;
-  type: 'alert' | 'checkin' | 'location' | 'update';
+  type: 'alert' | 'checkin' | 'location' | 'update' | 'friend_request' | 'family_request' | 'friend_accepted' | 'family_accepted';
   title: string;
   message: string;
   time: string;
   read: boolean;
+  status?: 'safe' | 'warning' | 'danger';
+  fromUserId?: string;
+  fromUserName?: string;
+  location?: string;
+  createdAt: any;
 }
 
 const NotificationsScreen = ({ navigation }: any) => {
+  const authInstance = getAuth();
+  const user = authInstance.currentUser;
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [selectedTab, setSelectedTab] = useState<'all' | 'unread'>('all');
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [friendRequestCount, setFriendRequestCount] = useState(0);
+  const [familyRequestCount, setFamilyRequestCount] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddFamilyModal, setShowAddFamilyModal] = useState(false);
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    // Listen to notifications in real-time
+    const unsubscribe = firestore()
+      .collection('notifications')
+      .where('userId', '==', user.uid)
+      .onSnapshot(
+        (snapshot) => {
+          const notifs: Notification[] = [];
+          snapshot.forEach((doc) => {
+            const data = doc.data();
+            notifs.push({
+              id: doc.id,
+              type: data.type || 'update',
+              title: data.title || '',
+              message: data.message || '',
+              time: formatTime(data.createdAt),
+              read: data.read || false,
+              status: data.status,
+              fromUserId: data.fromUserId,
+              fromUserName: data.fromUserName,
+              location: data.location,
+              createdAt: data.createdAt,
+            });
+          });
+
+          // Sort by createdAt descending
+          notifs.sort((a, b) => {
+            const aTime = a.createdAt?.toMillis?.() || 0;
+            const bTime = b.createdAt?.toMillis?.() || 0;
+            return bTime - aTime;
+          });
+
+          setNotifications(notifs);
+          setLoading(false);
+        },
+        (error) => {
+          console.error('Error fetching notifications:', error);
+          setLoading(false);
+        }
+      );
+
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    // Listen to friend requests count
+    const friendUnsubscribe = firestore()
+      .collection('friend_requests')
+      .where('toUserId', '==', user.uid)
+      .where('status', '==', 'pending')
+      .onSnapshot((snapshot) => {
+        setFriendRequestCount(snapshot.size);
+      });
+
+    // Listen to family requests count
+    const familyUnsubscribe = firestore()
+      .collection('family_requests')
+      .where('toUserId', '==', user.uid)
+      .where('status', '==', 'pending')
+      .onSnapshot((snapshot) => {
+        setFamilyRequestCount(snapshot.size);
+      });
+
+    return () => {
+      friendUnsubscribe();
+      familyUnsubscribe();
+    };
+  }, [user]);
+
+  const formatTime = (timestamp: any) => {
+    if (!timestamp) return 'Just now';
+
+    const now = new Date();
+    const time = timestamp.toDate();
+    const diff = Math.floor((now.getTime() - time.getTime()) / 1000); // seconds
+
+    if (diff < 60) return 'Just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)} minutes ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)} days ago`;
+    
+    return time.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: time.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+    });
+  };
+
+  const markAsRead = async (notificationId: string) => {
+    try {
+      await firestore()
+        .collection('notifications')
+        .doc(notificationId)
+        .update({ read: true });
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+    }
+  };
+
+  const markAllAsRead = async () => {
+    try {
+      const batch = firestore().batch();
+      const unreadNotifs = notifications.filter(n => !n.read);
+
+      unreadNotifs.forEach(notif => {
+        const ref = firestore().collection('notifications').doc(notif.id);
+        batch.update(ref, { read: true });
+      });
+
+      await batch.commit();
+      Alert.alert('Success', 'All notifications marked as read');
+    } catch (error) {
+      console.error('Error marking all as read:', error);
+      Alert.alert('Error', 'Failed to mark notifications as read');
+    }
+  };
+
+  const clearAll = async () => {
+    Alert.alert(
+      'Clear All Notifications',
+      'Are you sure you want to delete all notifications?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const batch = firestore().batch();
+              notifications.forEach(notif => {
+                const ref = firestore().collection('notifications').doc(notif.id);
+                batch.delete(ref);
+              });
+              await batch.commit();
+              Alert.alert('Success', 'All notifications cleared');
+            } catch (error) {
+              console.error('Error clearing notifications:', error);
+              Alert.alert('Error', 'Failed to clear notifications');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   // Modal handlers
   const handleAddFamily = () => {
@@ -47,86 +213,75 @@ const NotificationsScreen = ({ navigation }: any) => {
 
   const handleFamilySubmit = (data: FamilyMemberData) => {
     console.log('Family member added:', data);
-    Alert.alert('Success', `${data.name} has been added to your family contacts`);
     setShowAddFamilyModal(false);
-    // TODO: Add to database/state
   };
 
   const handleFriendSubmit = (data: FriendData) => {
     console.log('Friend added:', data);
-    Alert.alert('Success', `Request sent to ${data.name}`);
     setShowAddFriendModal(false);
-    // TODO: Add to database/state
   };
-  
-  const notifications: Notification[] = [
-    {
-      id: '1',
-      type: 'alert',
-      title: 'Severe Weather Alert',
-      message: 'Typhoon warning in your area. Stay safe indoors.',
-      time: '2 hours ago',
-      read: false,
-    },
-    {
-      id: '2',
-      type: 'checkin',
-      title: 'Check-In Reminder',
-      message: 'bakitman checked in as SAFE from Toledo Barangay Hall',
-      time: '5 hours ago',
-      read: false,
-    },
-    {
-      id: '3',
-      type: 'location',
-      title: 'Location Update',
-      message: 'lastikman shared their location at Charm Hotel',
-      time: '1 day ago',
-      read: true,
-    },
-    {
-      id: '4',
-      type: 'update',
-      title: 'App Update Available',
-      message: 'New features and improvements are available',
-      time: '2 days ago',
-      read: true,
-    },
-    {
-      id: '5',
-      type: 'alert',
-      title: 'Emergency Advisory',
-      message: 'Evacuation centers opened in affected areas',
-      time: '3 days ago',
-      read: true,
-    },
-  ];
 
-  const getNotificationIcon = (type: string) => {
+  const getNotificationIcon = (type: string, status?: string) => {
+    if (type === 'checkin') {
+      switch (status) {
+        case 'safe':
+          return '✅';
+        case 'warning':
+          return '⚠️';
+        case 'danger':
+          return '🆘';
+        default:
+          return '✅';
+      }
+    }
+    
     switch (type) {
       case 'alert':
         return '⚠️';
-      case 'checkin':
-        return '✅';
       case 'location':
         return '📍';
       case 'update':
         return '🔔';
+      case 'friend_request':
+        return '👥';
+      case 'family_request':
+        return '👨‍👩‍👧‍👦';
+      case 'friend_accepted':
+        return '✅';
+      case 'family_accepted':
+        return '✅';
       default:
         return '📢';
     }
   };
 
-  const getNotificationColor = (type: string) => {
+  const getNotificationColor = (type: string, status?: string) => {
+    if (type === 'checkin') {
+      switch (status) {
+        case 'safe':
+          return '#10B981';
+        case 'warning':
+          return '#F59E0B';
+        case 'danger':
+          return '#EF4444';
+        default:
+          return '#10B981';
+      }
+    }
+    
     switch (type) {
       case 'alert':
         return '#EF4444';
-      case 'checkin':
-        return '#10B981';
       case 'location':
         return '#3B82F6';
       case 'update':
         return '#F59E0B';
+      case 'friend_request':
+      case 'friend_accepted':
+        return '#3B82F6';
+      case 'family_request':
+      case 'family_accepted':
+        return '#10B981';
       default:
         return '#64748B';
     }
@@ -140,6 +295,18 @@ const NotificationsScreen = ({ navigation }: any) => {
   });
 
   const unreadCount = notifications.filter(n => !n.read).length;
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text style={styles.loadingText}>Loading notifications...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -164,6 +331,57 @@ const NotificationsScreen = ({ navigation }: any) => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Request Cards */}
+        <View style={styles.requestsSection}>
+          <TouchableOpacity
+            style={styles.requestCard}
+            onPress={() => navigation.navigate('FriendRequests')}
+          >
+            <View style={styles.requestIcon}>
+              <Text style={styles.requestIconText}>👥</Text>
+            </View>
+            <View style={styles.requestInfo}>
+              <Text style={styles.requestTitle}>Friend Requests</Text>
+              <Text style={styles.requestSubtitle}>
+                {friendRequestCount === 0 
+                  ? 'No pending requests' 
+                  : `${friendRequestCount} pending request${friendRequestCount > 1 ? 's' : ''}`
+                }
+              </Text>
+            </View>
+            {friendRequestCount > 0 && (
+              <View style={styles.requestBadge}>
+                <Text style={styles.requestBadgeText}>{friendRequestCount}</Text>
+              </View>
+            )}
+            <Text style={styles.requestArrow}>→</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.requestCard}
+            onPress={() => navigation.navigate('FamilyRequests')}
+          >
+            <View style={[styles.requestIcon, { backgroundColor: '#DCFCE7' }]}>
+              <Text style={styles.requestIconText}>👨‍👩‍👧‍👦</Text>
+            </View>
+            <View style={styles.requestInfo}>
+              <Text style={styles.requestTitle}>Family Requests</Text>
+              <Text style={styles.requestSubtitle}>
+                {familyRequestCount === 0 
+                  ? 'No pending requests' 
+                  : `${familyRequestCount} pending request${familyRequestCount > 1 ? 's' : ''}`
+                }
+              </Text>
+            </View>
+            {familyRequestCount > 0 && (
+              <View style={[styles.requestBadge, { backgroundColor: '#10B981' }]}>
+                <Text style={styles.requestBadgeText}>{familyRequestCount}</Text>
+              </View>
+            )}
+            <Text style={styles.requestArrow}>→</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Notification Toggle */}
         <View style={styles.toggleCard}>
           <View style={styles.toggleInfo}>
@@ -219,7 +437,9 @@ const NotificationsScreen = ({ navigation }: any) => {
               <Text style={styles.emptyIcon}>🔔</Text>
               <Text style={styles.emptyTitle}>No Notifications</Text>
               <Text style={styles.emptyText}>
-                You're all caught up! Check back later for updates.
+                {selectedTab === 'unread' 
+                  ? "You're all caught up! No unread notifications."
+                  : "You don't have any notifications yet."}
               </Text>
             </View>
           ) : (
@@ -230,18 +450,23 @@ const NotificationsScreen = ({ navigation }: any) => {
                   styles.notificationCard,
                   !notification.read && styles.notificationUnread,
                 ]}
+                onPress={() => {
+                  if (!notification.read) {
+                    markAsRead(notification.id);
+                  }
+                }}
               >
                 <View
                   style={[
                     styles.notificationIcon,
                     {
                       backgroundColor:
-                        getNotificationColor(notification.type) + '20',
+                        getNotificationColor(notification.type, notification.status) + '20',
                     },
                   ]}
                 >
                   <Text style={styles.notificationIconText}>
-                    {getNotificationIcon(notification.type)}
+                    {getNotificationIcon(notification.type, notification.status)}
                   </Text>
                 </View>
 
@@ -257,6 +482,11 @@ const NotificationsScreen = ({ navigation }: any) => {
                   <Text style={styles.notificationMessage}>
                     {notification.message}
                   </Text>
+                  {notification.location && (
+                    <Text style={styles.notificationLocation}>
+                      📍 {notification.location}
+                    </Text>
+                  )}
                   <Text style={styles.notificationTime}>
                     {notification.time}
                   </Text>
@@ -269,11 +499,23 @@ const NotificationsScreen = ({ navigation }: any) => {
         {/* Quick Actions */}
         {filteredNotifications.length > 0 && (
           <View style={styles.actionsSection}>
-            <TouchableOpacity style={styles.actionButton}>
-              <Text style={styles.actionButtonText}>Mark All as Read</Text>
+            <TouchableOpacity 
+              style={styles.actionButton}
+              onPress={markAllAsRead}
+              disabled={unreadCount === 0}
+            >
+              <Text style={[
+                styles.actionButtonText,
+                unreadCount === 0 && styles.actionButtonDisabled
+              ]}>
+                Mark All as Read
+              </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.actionButton, styles.clearButton]}>
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.clearButton]}
+              onPress={clearAll}
+            >
               <Text style={styles.clearButtonText}>Clear All</Text>
             </TouchableOpacity>
           </View>
@@ -314,7 +556,9 @@ const NotificationsScreen = ({ navigation }: any) => {
           <Text style={[styles.navLabel, styles.navLabelActive]}>Alerts</Text>
           {unreadCount > 0 && (
             <View style={styles.notificationBadge}>
-              <Text style={styles.notificationBadgeText}>{unreadCount}</Text>
+              <Text style={styles.notificationBadgeText}>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </Text>
             </View>
           )}
         </TouchableOpacity>
@@ -343,11 +587,21 @@ const NotificationsScreen = ({ navigation }: any) => {
   );
 };
 
-// Keep all existing styles (they remain unchanged)
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#64748B',
+    fontWeight: '600',
   },
   header: {
     flexDirection: 'row',
@@ -381,6 +635,66 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 100,
+  },
+  requestsSection: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 16,
+    gap: 12,
+  },
+  requestCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  requestIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#DBEAFE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  requestIconText: {
+    fontSize: 24,
+  },
+  requestInfo: {
+    flex: 1,
+  },
+  requestTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+    marginBottom: 2,
+  },
+  requestSubtitle: {
+    fontSize: 13,
+    color: '#64748B',
+  },
+  requestBadge: {
+    backgroundColor: '#3B82F6',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    marginRight: 8,
+  },
+  requestBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  requestArrow: {
+    fontSize: 18,
+    color: '#64748B',
+    fontWeight: '700',
   },
   toggleCard: {
     flexDirection: 'row',
@@ -488,6 +802,11 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 6,
   },
+  notificationLocation: {
+    fontSize: 13,
+    color: '#3B82F6',
+    marginBottom: 6,
+  },
   notificationTime: {
     fontSize: 12,
     color: '#94A3B8',
@@ -528,6 +847,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
+  },
+  actionButtonDisabled: {
+    opacity: 0.5,
   },
   clearButton: {
     backgroundColor: '#FFFFFF',

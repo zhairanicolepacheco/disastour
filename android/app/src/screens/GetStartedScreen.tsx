@@ -154,7 +154,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 32,
     justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'ios' ? height * 0.12 : height * 0.1,
+    paddingTop: Platform.OS === 'ios' ? height * 0.12 : height * 0.05,
     paddingBottom: Platform.OS === 'ios' ? 48 : 32,
   },
   heroSection: {

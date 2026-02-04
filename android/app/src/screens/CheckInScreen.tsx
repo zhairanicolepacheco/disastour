@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
+import Geolocation from '@react-native-community/geolocation';
 import { colors } from '../config/colors';
 
 // Import modals
@@ -25,16 +27,185 @@ interface CheckInHistory {
   date: string;
   time: string;
   status: 'safe' | 'warning' | 'danger';
+  createdAt: any;
 }
 
 const CheckInScreen = ({ navigation }: any) => {
   const authInstance = getAuth();
   const user = authInstance.currentUser;
   const [loading, setLoading] = useState(false);
-  const [lastCheckIn, setLastCheckIn] = useState<string | null>(null);
+  const [checkInHistory, setCheckInHistory] = useState<CheckInHistory[]>([]);
+  const [currentLocation, setCurrentLocation] = useState<string>('Barangay Lalaan 2');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddFamilyModal, setShowAddFamilyModal] = useState(false);
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      loadCheckInHistory();
+      getCurrentLocation();
+    }
+  }, [user]);
+
+  const getCurrentLocation = () => {
+    Geolocation.getCurrentPosition(
+      (position) => {
+        // For now, we'll use the default location
+        // In production, you'd reverse geocode the coordinates
+        setCurrentLocation('Barangay Lalaan 2');
+      },
+      (error) => {
+        console.log('Location error:', error);
+        setCurrentLocation('Barangay Lalaan 2');
+      },
+      { enableHighAccuracy: false, timeout: 5000, maximumAge: 10000 }
+    );
+  };
+
+  const loadCheckInHistory = async () => {
+    try {
+      const snapshot = await firestore()
+        .collection('check_ins')
+        .where('userId', '==', user!.uid)
+        .get();
+
+      const history: CheckInHistory[] = [];
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        history.push({
+          id: doc.id,
+          location: data.location || 'Unknown',
+          date: data.createdAt ? new Date(data.createdAt.toMillis()).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          }) : '',
+          time: data.createdAt ? new Date(data.createdAt.toMillis()).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }) : '',
+          status: data.status,
+          createdAt: data.createdAt,
+        });
+      });
+
+      // Sort by createdAt descending
+      history.sort((a, b) => {
+        const aTime = a.createdAt?.toMillis?.() || 0;
+        const bTime = b.createdAt?.toMillis?.() || 0;
+        return bTime - aTime;
+      });
+
+      setCheckInHistory(history.slice(0, 10)); // Keep only last 10
+    } catch (error) {
+      console.error('Error loading check-in history:', error);
+    }
+  };
+
+  const notifyContacts = async (status: 'safe' | 'warning' | 'danger') => {
+    try {
+      const batch = firestore().batch();
+      const userName = user!.displayName || 'A contact';
+      const statusEmoji = status === 'safe' ? '✅' : status === 'warning' ? '⚠️' : '🆘';
+      const statusText = status === 'safe' ? 'SAFE' : status === 'warning' ? 'NEEDS ATTENTION' : 'EMERGENCY';
+
+      // Get all friends
+      const friendsSnapshot = await firestore()
+        .collection('friends')
+        .doc(user!.uid)
+        .collection('userFriends')
+        .get();
+
+      friendsSnapshot.forEach((doc) => {
+        const friendData = doc.data();
+        const notificationRef = firestore().collection('notifications').doc();
+
+        batch.set(notificationRef, {
+          userId: friendData.userId,
+          type: 'checkin',
+          title: `${userName} checked in`,
+          message: `${userName} checked in as ${statusText} from ${currentLocation}`,
+          status: status,
+          fromUserId: user!.uid,
+          fromUserName: userName,
+          location: currentLocation,
+          read: false,
+          createdAt: firestore.FieldValue.serverTimestamp(),
+        });
+      });
+
+      // Get all family members
+      const familySnapshot = await firestore()
+        .collection('family')
+        .doc(user!.uid)
+        .collection('userFamily')
+        .get();
+
+      familySnapshot.forEach((doc) => {
+        const familyData = doc.data();
+        const notificationRef = firestore().collection('notifications').doc();
+
+        batch.set(notificationRef, {
+          userId: familyData.userId,
+          type: 'checkin',
+          title: `${userName} checked in`,
+          message: `${userName} checked in as ${statusText} from ${currentLocation}`,
+          status: status,
+          fromUserId: user!.uid,
+          fromUserName: userName,
+          location: currentLocation,
+          read: false,
+          createdAt: firestore.FieldValue.serverTimestamp(),
+        });
+      });
+
+      await batch.commit();
+      console.log('Notifications sent to friends and family');
+    } catch (error) {
+      console.error('Error notifying contacts:', error);
+    }
+  };
+
+  const handleCheckIn = async (status: 'safe' | 'warning' | 'danger') => {
+    if (!user) {
+      Alert.alert('Error', 'You must be logged in to check in');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // Create check-in record
+      const checkInRef = firestore().collection('check_ins').doc();
+      await checkInRef.set({
+        userId: user.uid,
+        userName: user.displayName || 'User',
+        userEmail: user.email || '',
+        status: status,
+        location: currentLocation,
+        createdAt: firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Notify all friends and family
+      await notifyContacts(status);
+
+      // Reload history
+      await loadCheckInHistory();
+
+      setLoading(false);
+
+      const statusText = status === 'safe' ? 'SAFE' : status === 'warning' ? 'NEEDS ATTENTION' : 'EMERGENCY';
+      Alert.alert(
+        'Check-In Successful',
+        `You've checked in as ${statusText}. Your friends and family have been notified.`,
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.error('Error during check-in:', error);
+      setLoading(false);
+      Alert.alert('Error', 'Failed to check in. Please try again.');
+    }
+  };
 
   // Modal handlers
   const handleAddFamily = () => {
@@ -49,54 +220,12 @@ const CheckInScreen = ({ navigation }: any) => {
 
   const handleFamilySubmit = (data: FamilyMemberData) => {
     console.log('Family member added:', data);
-    Alert.alert('Success', `${data.name} has been added to your family contacts`);
     setShowAddFamilyModal(false);
-    // TODO: Add to database/state
   };
 
   const handleFriendSubmit = (data: FriendData) => {
     console.log('Friend added:', data);
-    Alert.alert('Success', `Request sent to ${data.name}`);
     setShowAddFriendModal(false);
-    // TODO: Add to database/state
-  };
-
-  const checkInHistory: CheckInHistory[] = [
-    {
-      id: '1',
-      location: 'Barangay Lalaan 2',
-      date: 'Jan 28, 2026',
-      time: '2:30 PM',
-      status: 'safe',
-    },
-    {
-      id: '2',
-      location: 'Barangay Hall',
-      date: 'Jan 27, 2026',
-      time: '10:15 AM',
-      status: 'safe',
-    },
-  ];
-
-  const handleCheckIn = async (status: 'safe' | 'warning' | 'danger') => {
-    setLoading(true);
-    
-    setTimeout(() => {
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString('en-US', {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-      
-      setLastCheckIn(`${timeStr} - ${status.toUpperCase()}`);
-      setLoading(false);
-      
-      Alert.alert(
-        'Check-In Successful',
-        `You've checked in as ${status.toUpperCase()}. Your emergency contacts will be notified.`,
-        [{ text: 'OK' }]
-      );
-    }, 1500);
   };
 
   const getStatusColor = (status: string) => {
@@ -146,33 +275,11 @@ const CheckInScreen = ({ navigation }: any) => {
           <View style={styles.placeholder} />
         </View>
 
-        {/* Status Card */}
-        <View style={styles.statusCard}>
-          <View style={styles.statusHeader}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {user?.displayName?.charAt(0).toUpperCase() || '?'}
-              </Text>
-            </View>
-            <View style={styles.statusInfo}>
-              <Text style={styles.userName}>{user?.displayName || 'User'}</Text>
-              <Text style={styles.locationText}>📍 Barangay Lalaan 2</Text>
-            </View>
-          </View>
-
-          {lastCheckIn && (
-            <View style={styles.lastCheckInBadge}>
-              <Text style={styles.lastCheckInLabel}>Last Check-In</Text>
-              <Text style={styles.lastCheckInText}>{lastCheckIn}</Text>
-            </View>
-          )}
-        </View>
-
         {/* Check-In Buttons */}
         <View style={styles.checkInSection}>
           <Text style={styles.sectionTitle}>How are you?</Text>
           <Text style={styles.sectionSubtitle}>
-            Let your emergency contacts know your status
+            Let your friends and family know your status
           </Text>
 
           <TouchableOpacity
@@ -180,15 +287,21 @@ const CheckInScreen = ({ navigation }: any) => {
             onPress={() => handleCheckIn('safe')}
             disabled={loading}
           >
-            <View style={styles.checkInIconContainer}>
-              <Text style={styles.checkInIcon}>✓</Text>
-            </View>
-            <View style={styles.checkInContent}>
-              <Text style={styles.checkInTitle}>I'm Safe</Text>
-              <Text style={styles.checkInDescription}>
-                Everything is okay
-              </Text>
-            </View>
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <View style={styles.checkInIconContainer}>
+                  <Text style={styles.checkInIcon}>✓</Text>
+                </View>
+                <View style={styles.checkInContent}>
+                  <Text style={styles.checkInTitle}>I'm Safe</Text>
+                  <Text style={styles.checkInDescription}>
+                    Everything is okay
+                  </Text>
+                </View>
+              </>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -196,15 +309,21 @@ const CheckInScreen = ({ navigation }: any) => {
             onPress={() => handleCheckIn('warning')}
             disabled={loading}
           >
-            <View style={styles.checkInIconContainer}>
-              <Text style={styles.checkInIcon}>⚠</Text>
-            </View>
-            <View style={styles.checkInContent}>
-              <Text style={styles.checkInTitle}>Need Attention</Text>
-              <Text style={styles.checkInDescription}>
-                Requires monitoring
-              </Text>
-            </View>
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <View style={styles.checkInIconContainer}>
+                  <Text style={styles.checkInIcon}>⚠</Text>
+                </View>
+                <View style={styles.checkInContent}>
+                  <Text style={styles.checkInTitle}>Need Attention</Text>
+                  <Text style={styles.checkInDescription}>
+                    Requires monitoring
+                  </Text>
+                </View>
+              </>
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -212,15 +331,21 @@ const CheckInScreen = ({ navigation }: any) => {
             onPress={() => handleCheckIn('danger')}
             disabled={loading}
           >
-            <View style={styles.checkInIconContainer}>
-              <Text style={styles.checkInIcon}>!</Text>
-            </View>
-            <View style={styles.checkInContent}>
-              <Text style={styles.checkInTitle}>Emergency</Text>
-              <Text style={styles.checkInDescription}>
-                Need immediate help
-              </Text>
-            </View>
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <View style={styles.checkInIconContainer}>
+                  <Text style={styles.checkInIcon}>!</Text>
+                </View>
+                <View style={styles.checkInContent}>
+                  <Text style={styles.checkInTitle}>Emergency</Text>
+                  <Text style={styles.checkInDescription}>
+                    Need immediate help
+                  </Text>
+                </View>
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -228,45 +353,51 @@ const CheckInScreen = ({ navigation }: any) => {
         <View style={styles.historySection}>
           <Text style={styles.sectionTitle}>Recent Check-Ins</Text>
 
-          {checkInHistory.map(item => (
-            <View key={item.id} style={styles.historyCard}>
-              <View
-                style={[
-                  styles.historyStatus,
-                  { backgroundColor: getStatusColor(item.status) },
-                ]}
-              >
-                <Text style={styles.historyStatusIcon}>
-                  {getStatusIcon(item.status)}
-                </Text>
-              </View>
-
-              <View style={styles.historyInfo}>
-                <Text style={styles.historyLocation}>{item.location}</Text>
-                <View style={styles.historyMeta}>
-                  <Text style={styles.historyDate}>{item.date}</Text>
-                  <Text style={styles.historyDot}>•</Text>
-                  <Text style={styles.historyTime}>{item.time}</Text>
-                </View>
-              </View>
-
-              <View
-                style={[
-                  styles.historyBadge,
-                  { backgroundColor: getStatusColor(item.status) + '15' },
-                ]}
-              >
-                <Text
+          {checkInHistory.length === 0 ? (
+            <View style={styles.emptyHistory}>
+              <Text style={styles.emptyHistoryText}>No check-ins yet</Text>
+            </View>
+          ) : (
+            checkInHistory.map(item => (
+              <View key={item.id} style={styles.historyCard}>
+                <View
                   style={[
-                    styles.historyBadgeText,
-                    { color: getStatusColor(item.status) },
+                    styles.historyStatus,
+                    { backgroundColor: getStatusColor(item.status) },
                   ]}
                 >
-                  {item.status}
-                </Text>
+                  <Text style={styles.historyStatusIcon}>
+                    {getStatusIcon(item.status)}
+                  </Text>
+                </View>
+
+                <View style={styles.historyInfo}>
+                  <Text style={styles.historyLocation}>{item.location}</Text>
+                  <View style={styles.historyMeta}>
+                    <Text style={styles.historyDate}>{item.date}</Text>
+                    <Text style={styles.historyDot}>•</Text>
+                    <Text style={styles.historyTime}>{item.time}</Text>
+                  </View>
+                </View>
+
+                <View
+                  style={[
+                    styles.historyBadge,
+                    { backgroundColor: getStatusColor(item.status) + '15' },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.historyBadgeText,
+                      { color: getStatusColor(item.status) },
+                    ]}
+                  >
+                    {item.status}
+                  </Text>
+                </View>
               </View>
-            </View>
-          ))}
+            ))
+          )}
         </View>
       </ScrollView>
 
@@ -362,81 +493,21 @@ const styles = StyleSheet.create({
   placeholder: {
     width: 40,
   },
-  statusCard: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 16,
-    padding: 20,
-    marginHorizontal: 20,
-    marginVertical: 24,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  statusHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#3B82F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  avatarText: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  statusInfo: {
-    flex: 1,
-  },
-  userName: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1E293B',
-    marginBottom: 4,
-  },
-  locationText: {
-    fontSize: 14,
-    color: '#64748B',
-  },
-  lastCheckInBadge: {
-    backgroundColor: '#DBEAFE',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#3B82F6',
-  },
-  lastCheckInLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#64748B',
-    marginBottom: 4,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  lastCheckInText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
   checkInSection: {
     paddingHorizontal: 20,
+    paddingTop: 32,
     marginBottom: 32,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: '900',
     color: '#1E293B',
     marginBottom: 8,
   },
   sectionSubtitle: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#64748B',
-    marginBottom: 20,
+    marginBottom: 24,
   },
   checkInButton: {
     flexDirection: 'row',
@@ -490,6 +561,14 @@ const styles = StyleSheet.create({
   historySection: {
     paddingHorizontal: 20,
     marginBottom: 24,
+  },
+  emptyHistory: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  emptyHistoryText: {
+    fontSize: 14,
+    color: '#94A3B8',
   },
   historyCard: {
     flexDirection: 'row',
@@ -555,7 +634,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     paddingVertical: 12,
     paddingHorizontal: 8,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 48,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 6,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
     shadowColor: '#000',

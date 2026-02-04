@@ -21,6 +21,7 @@ interface FriendRequest {
   fromUserName: string;
   fromUserEmail: string;
   toUserId: string;
+  nickname?: string;
   status: 'pending' | 'accepted' | 'rejected';
   createdAt: any;
 }
@@ -38,7 +39,6 @@ const FriendRequestsScreen = ({ navigation }: any) => {
     }
 
     // Listen to friend requests in real-time
-    // Removed orderBy to avoid composite index requirement
     const unsubscribe = firestore()
       .collection('friend_requests')
       .where('toUserId', '==', user.uid)
@@ -93,6 +93,7 @@ const FriendRequestsScreen = ({ navigation }: any) => {
         userId: request.fromUserId,
         userName: request.fromUserName,
         userEmail: request.fromUserEmail,
+        nickname: request.nickname || null,
         canTrack: true,
         addedAt: firestore.FieldValue.serverTimestamp(),
       });
@@ -108,6 +109,7 @@ const FriendRequestsScreen = ({ navigation }: any) => {
         userId: user!.uid,
         userName: user!.displayName || 'User',
         userEmail: user!.email || '',
+        nickname: null, // Requester didn't set a nickname for current user
         canTrack: true,
         addedAt: firestore.FieldValue.serverTimestamp(),
       });
@@ -122,11 +124,25 @@ const FriendRequestsScreen = ({ navigation }: any) => {
         acceptedAt: firestore.FieldValue.serverTimestamp(),
       });
 
+      // Send notification to requester
+      const notificationRef = firestore().collection('notifications').doc();
+      batch.set(notificationRef, {
+        userId: request.fromUserId,
+        type: 'friend_accepted',
+        title: 'Friend Request Accepted',
+        message: `${user!.displayName || 'Someone'} accepted your friend request`,
+        fromUserId: user!.uid,
+        fromUserName: user!.displayName || 'User',
+        read: false,
+        createdAt: firestore.FieldValue.serverTimestamp(),
+      });
+
       await batch.commit();
 
+      const displayName = request.nickname || request.fromUserName;
       Alert.alert(
         'Friend Added',
-        `${request.fromUserName} is now your friend!`,
+        `${displayName} is now your friend!`,
         [{ text: 'OK' }]
       );
     } catch (error) {
@@ -135,10 +151,11 @@ const FriendRequestsScreen = ({ navigation }: any) => {
     }
   };
 
-  const rejectRequest = async (requestId: string, userName: string) => {
+  const rejectRequest = async (requestId: string, userName: string, nickname?: string) => {
+    const displayName = nickname || userName;
     Alert.alert(
       'Reject Request',
-      `Are you sure you want to reject ${userName}'s friend request?`,
+      `Are you sure you want to reject ${displayName}'s friend request?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -179,38 +196,52 @@ const FriendRequestsScreen = ({ navigation }: any) => {
     </View>
   );
 
-  const renderRequest = ({ item }: { item: FriendRequest }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {item.fromUserName?.charAt(0).toUpperCase() || '?'}
-          </Text>
+  const renderRequest = ({ item }: { item: FriendRequest }) => {
+    const displayName = item.nickname || item.fromUserName;
+    
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>
+              {displayName?.charAt(0).toUpperCase() || '?'}
+            </Text>
+          </View>
+          <View style={styles.cardInfo}>
+            <View style={styles.nameRow}>
+              <Text style={styles.name}>{displayName || 'Unknown User'}</Text>
+              {item.nickname && (
+                <View style={styles.nicknameBadge}>
+                  <Text style={styles.nicknameBadgeText}>Nickname</Text>
+                </View>
+              )}
+            </View>
+            {item.nickname && (
+              <Text style={styles.realName}>Real name: {item.fromUserName}</Text>
+            )}
+            <Text style={styles.email}>{item.fromUserEmail}</Text>
+            <Text style={styles.text}>wants to track your location</Text>
+          </View>
         </View>
-        <View style={styles.cardInfo}>
-          <Text style={styles.name}>{item.fromUserName || 'Unknown User'}</Text>
-          <Text style={styles.email}>{item.fromUserEmail}</Text>
-          <Text style={styles.text}>wants to track your location</Text>
+
+        <View style={styles.actions}>
+          <TouchableOpacity
+            style={[styles.button, styles.rejectButton]}
+            onPress={() => rejectRequest(item.id, item.fromUserName, item.nickname)}
+          >
+            <Text style={styles.rejectText}>Reject</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.acceptButton]}
+            onPress={() => acceptRequest(item)}
+          >
+            <Text style={styles.acceptText}>Accept</Text>
+          </TouchableOpacity>
         </View>
       </View>
-
-      <View style={styles.actions}>
-        <TouchableOpacity
-          style={[styles.button, styles.rejectButton]}
-          onPress={() => rejectRequest(item.id, item.fromUserName)}
-        >
-          <Text style={styles.rejectText}>Reject</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.button, styles.acceptButton]}
-          onPress={() => acceptRequest(item)}
-        >
-          <Text style={styles.acceptText}>Accept</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+    );
+  };
 
   if (loading) {
     return (
@@ -332,10 +363,31 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
   name: {
     fontSize: 16,
     fontWeight: '700',
     color: '#1E293B',
+    marginRight: 8,
+  },
+  nicknameBadge: {
+    backgroundColor: '#DBEAFE',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  nicknameBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#1E40AF',
+  },
+  realName: {
+    fontSize: 12,
+    color: '#94A3B8',
     marginBottom: 2,
   },
   email: {
