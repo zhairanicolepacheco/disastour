@@ -9,7 +9,10 @@ import {
   Platform,
   ScrollView,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
+import { getAuth } from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
 
 interface AddFamilyModalProps {
   visible: boolean;
@@ -18,10 +21,10 @@ interface AddFamilyModalProps {
 }
 
 export interface FamilyMemberData {
-  name: string;
+  email: string;
   relationship: string;
-  phoneNumber: string;
-  address: string;
+  nickname?: string;
+  phoneNumber?: string;
 }
 
 const relationships = [
@@ -31,6 +34,8 @@ const relationships = [
   'Child',
   'Grandparent',
   'Grandchild',
+  'Aunt/Uncle',
+  'Cousin',
   'Other',
 ];
 
@@ -39,44 +44,156 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
   onClose,
   onSubmit,
 }) => {
-  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [relationship, setRelationship] = useState('');
+  const [nickname, setNickname] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [address, setAddress] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = () => {
-    if (!name.trim()) {
-      Alert.alert('Error', 'Please enter a name');
+  const handleSubmit = async () => {
+    if (!email.trim()) {
+      Alert.alert('Error', 'Please enter an email address');
       return;
     }
     if (!relationship) {
       Alert.alert('Error', 'Please select a relationship');
       return;
     }
-    if (!phoneNumber.trim()) {
-      Alert.alert('Error', 'Please enter a phone number');
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      Alert.alert('Error', 'Please enter a valid email address');
       return;
     }
 
-    onSubmit({
-      name: name.trim(),
-      relationship,
-      phoneNumber: phoneNumber.trim(),
-      address: address.trim(),
-    });
+    setLoading(true);
 
-    // Reset form
-    setName('');
-    setRelationship('');
-    setPhoneNumber('');
-    setAddress('');
+    try {
+      const authInstance = getAuth();
+      const currentUser = authInstance.currentUser;
+
+      if (!currentUser) {
+        Alert.alert('Error', 'You must be logged in');
+        setLoading(false);
+        return;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+
+      // Check if trying to add yourself
+      if (normalizedEmail === currentUser.email?.toLowerCase()) {
+        Alert.alert('Error', 'You cannot add yourself as a family member');
+        setLoading(false);
+        return;
+      }
+
+      // Search for user by email in Firestore
+      const usersSnapshot = await firestore()
+        .collection('users')
+        .where('email', '==', normalizedEmail)
+        .get();
+
+      if (usersSnapshot.empty) {
+        Alert.alert(
+          'User Not Found',
+          `No user found with email ${email}. They need to create an account first.`
+        );
+        setLoading(false);
+        return;
+      }
+
+      const targetUserDoc = usersSnapshot.docs[0];
+      const targetUserId = targetUserDoc.id;
+      const targetUserData = targetUserDoc.data();
+
+      // Check if already family
+      const existingFamily = await firestore()
+        .collection('family')
+        .doc(currentUser.uid)
+        .collection('userFamily')
+        .doc(targetUserId)
+        .get();
+
+      if (existingFamily.exists()) {
+        Alert.alert('Error', 'This person is already in your family contacts');
+        setLoading(false);
+        return;
+      }
+
+      // Check if request already exists
+      const existingRequest = await firestore()
+        .collection('family_requests')
+        .where('fromUserId', '==', currentUser.uid)
+        .where('toUserId', '==', targetUserId)
+        .where('status', '==', 'pending')
+        .get();
+
+      if (!existingRequest.empty) {
+        Alert.alert('Error', 'You already sent a family request to this person');
+        setLoading(false);
+        return;
+      }
+
+      // Create family request
+      await firestore().collection('family_requests').add({
+        fromUserId: currentUser.uid,
+        fromUserName: currentUser.displayName || 'User',
+        fromUserEmail: currentUser.email || '',
+        toUserId: targetUserId,
+        toUserName: targetUserData.displayName || 'User',
+        toUserEmail: targetUserData.email || '',
+        relationship: relationship,
+        nickname: nickname.trim() || null,
+        phoneNumber: phoneNumber.trim() || null,
+        status: 'pending',
+        createdAt: firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Send notification to the target user
+      await firestore().collection('notifications').add({
+        userId: targetUserId,
+        type: 'family_request',
+        title: 'New Family Request',
+        message: `${currentUser.displayName || 'Someone'} wants to add you as their ${relationship}`,
+        fromUserId: currentUser.uid,
+        fromUserName: currentUser.displayName || 'User',
+        relationship: relationship,
+        read: false,
+        createdAt: firestore.FieldValue.serverTimestamp(),
+      });
+
+      const displayName = nickname.trim() || targetUserData.displayName || email;
+      Alert.alert(
+        'Request Sent!',
+        `Family request sent to ${displayName}. They will be added once they accept.`
+      );
+
+      // Call onSubmit callback
+      onSubmit({
+        email: normalizedEmail,
+        relationship,
+        nickname: nickname.trim(),
+        phoneNumber: phoneNumber.trim(),
+      });
+
+      // Reset form
+      setEmail('');
+      setRelationship('');
+      setNickname('');
+      setPhoneNumber('');
+      setLoading(false);
+    } catch (error: any) {
+      console.error('Error sending family request:', error);
+      Alert.alert('Error', 'Failed to send family request. Please try again.');
+      setLoading(false);
+    }
   };
 
   const handleClose = () => {
-    setName('');
+    setEmail('');
     setRelationship('');
+    setNickname('');
     setPhoneNumber('');
-    setAddress('');
     onClose();
   };
 
@@ -97,15 +214,25 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={styles.infoCard}>
+              <Text style={styles.infoIcon}>👨‍👩‍👧‍👦</Text>
+              <Text style={styles.infoText}>
+                Enter the email address of your family member. They will receive a request and need to accept it.
+              </Text>
+            </View>
+
             <View style={styles.form}>
-              {/* Name Input */}
+              {/* Email Input */}
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Full Name *</Text>
+                <Text style={styles.label}>Email Address *</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="Enter full name"
-                  value={name}
-                  onChangeText={setName}
+                  placeholder="family@example.com"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  editable={!loading}
                   placeholderTextColor="#94A3B8"
                 />
               </View>
@@ -122,6 +249,7 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
                         relationship === rel && styles.relationshipChipActive,
                       ]}
                       onPress={() => setRelationship(rel)}
+                      disabled={loading}
                     >
                       <Text
                         style={[
@@ -136,32 +264,37 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
                 </View>
               </View>
 
-              {/* Phone Number Input */}
+              {/* Nickname Input (Optional) */}
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Phone Number *</Text>
+                <Text style={styles.label}>Nickname (Optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., Mom, Dad, Big Sis"
+                  value={nickname}
+                  onChangeText={setNickname}
+                  editable={!loading}
+                  placeholderTextColor="#94A3B8"
+                />
+                <Text style={styles.helperText}>
+                  Give them a custom name for easy identification
+                </Text>
+              </View>
+
+              {/* Phone Number Input (Optional) */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Phone Number (Optional)</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="+63 912 345 6789"
                   value={phoneNumber}
                   onChangeText={setPhoneNumber}
                   keyboardType="phone-pad"
+                  editable={!loading}
                   placeholderTextColor="#94A3B8"
                 />
-              </View>
-
-              {/* Address Input */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Address (Optional)</Text>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  placeholder="Enter address"
-                  value={address}
-                  onChangeText={setAddress}
-                  multiline
-                  numberOfLines={3}
-                  textAlignVertical="top"
-                  placeholderTextColor="#94A3B8"
-                />
+                <Text style={styles.helperText}>
+                  For emergency contact purposes
+                </Text>
               </View>
             </View>
           </ScrollView>
@@ -170,6 +303,7 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
             <TouchableOpacity
               style={[styles.button, styles.cancelButton]}
               onPress={handleClose}
+              disabled={loading}
             >
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
@@ -177,8 +311,13 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
             <TouchableOpacity
               style={[styles.button, styles.submitButton]}
               onPress={handleSubmit}
+              disabled={loading}
             >
-              <Text style={styles.submitButtonText}>Add Family Member</Text>
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.submitButtonText}>Send Request</Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -206,7 +345,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
   },
   modalTitle: {
     fontSize: 24,
@@ -225,6 +364,26 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#64748B',
     fontWeight: '600',
+  },
+  infoCard: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  infoIcon: {
+    fontSize: 24,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#1E40AF',
+    lineHeight: 18,
   },
   form: {
     gap: 20,
@@ -248,9 +407,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#1E293B',
   },
-  textArea: {
-    height: 80,
-    paddingTop: 14,
+  helperText: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4,
   },
   relationshipGrid: {
     flexDirection: 'row',
