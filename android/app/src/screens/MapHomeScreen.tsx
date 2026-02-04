@@ -15,6 +15,7 @@ import MapView, { Marker, PROVIDER_GOOGLE, Circle } from 'react-native-maps';
 import MapClusteringView from 'react-native-map-clustering';
 import Geolocation from '@react-native-community/geolocation';
 import { getAuth } from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
 import { colors } from '../config/colors';
 
 // Import modals
@@ -67,10 +68,145 @@ const MapHomeScreen = ({ navigation }: any) => {
     latitude: number;
     longitude: number;
   } | null>(null);
+  const [routeCoordinates, setRouteCoordinates] = useState<Array<{ latitude: number; longitude: number }>>([]);
+  const [showingRoute, setShowingRoute] = useState(false);
+  const [locationUsers, setLocationUsers] = useState<LocationUser[]>([]);
 
   useEffect(() => {
     requestLocationPermission();
+    
+    // Update location every 30 seconds
+    const locationInterval = setInterval(() => {
+      getCurrentLocation();
+    }, 30000); // 30 seconds
+
+    return () => {
+      clearInterval(locationInterval);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const unsubscribers: (() => void)[] = [];
+
+    // Fetch family members
+    const familyUnsubscribe = firestore()
+      .collection('family')
+      .doc(user.uid)
+      .collection('userFamily')
+      .onSnapshot(
+        (snapshot) => {
+          snapshot.docs.forEach((doc) => {
+            const familyData = doc.data();
+            const familyUserId = doc.id;
+
+            // Listen to family member's location
+            const locationUnsubscribe = firestore()
+              .collection('user_locations')
+              .doc(familyUserId)
+              .onSnapshot(
+                (locationDoc) => {
+                  if (locationDoc.exists()) {
+                    const locationData = locationDoc.data();
+                    if (locationData?.latitude && locationData?.longitude) {
+                      setLocationUsers((prev) => {
+                        const filtered = prev.filter((u) => u.id !== familyUserId);
+                        return [
+                          ...filtered,
+                          {
+                            id: familyUserId,
+                            name: familyData.nickname || familyData.userName || 'Family Member',
+                            location: locationData.address || 'Unknown location',
+                            type: 'family',
+                            latitude: locationData.latitude,
+                            longitude: locationData.longitude,
+                            avatar: '👤',
+                          },
+                        ];
+                      });
+                    }
+                  } else {
+                    // Remove if no location data
+                    setLocationUsers((prev) => prev.filter((u) => u.id !== familyUserId));
+                  }
+                },
+                (error) => {
+                  console.error('Error fetching family location:', error);
+                }
+              );
+
+            unsubscribers.push(locationUnsubscribe);
+          });
+        },
+        (error) => {
+          console.error('Error fetching family members:', error);
+        }
+      );
+
+    unsubscribers.push(familyUnsubscribe);
+
+    // Fetch friends
+    const friendsUnsubscribe = firestore()
+      .collection('friends')
+      .doc(user.uid)
+      .collection('userFriends')
+      .onSnapshot(
+        (snapshot) => {
+          snapshot.docs.forEach((doc) => {
+            const friendData = doc.data();
+            const friendUserId = doc.id;
+
+            // Listen to friend's location
+            const locationUnsubscribe = firestore()
+              .collection('user_locations')
+              .doc(friendUserId)
+              .onSnapshot(
+                (locationDoc) => {
+                  if (locationDoc.exists()) {
+                    const locationData = locationDoc.data();
+                    if (locationData?.latitude && locationData?.longitude) {
+                      setLocationUsers((prev) => {
+                        const filtered = prev.filter((u) => u.id !== friendUserId);
+                        return [
+                          ...filtered,
+                          {
+                            id: friendUserId,
+                            name: friendData.nickname || friendData.userName || 'Friend',
+                            location: locationData.address || 'Unknown location',
+                            type: 'friend',
+                            latitude: locationData.latitude,
+                            longitude: locationData.longitude,
+                            avatar: '👤',
+                          },
+                        ];
+                      });
+                    }
+                  } else {
+                    // Remove if no location data
+                    setLocationUsers((prev) => prev.filter((u) => u.id !== friendUserId));
+                  }
+                },
+                (error) => {
+                  console.error('Error fetching friend location:', error);
+                }
+              );
+
+            unsubscribers.push(locationUnsubscribe);
+          });
+        },
+        (error) => {
+          console.error('Error fetching friends:', error);
+        }
+      );
+
+    unsubscribers.push(friendsUnsubscribe);
+
+    // Cleanup
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [user?.uid]);
 
   const requestLocationPermission = async () => {
     if (Platform.OS === 'android') {
@@ -102,12 +238,61 @@ const MapHomeScreen = ({ navigation }: any) => {
         setUserLocation({
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
-        });
+        };
+        setUserLocation(newLocation);
+        console.log('Location fetched:', newLocation);
+        
+        // Save location to Firebase for friends/family to see
+        if (user?.uid) {
+          firestore()
+            .collection('user_locations')
+            .doc(user.uid)
+            .set({
+              latitude: newLocation.latitude,
+              longitude: newLocation.longitude,
+              address: 'Barangay Lalaan 2', // You can use reverse geocoding here
+              updatedAt: firestore.FieldValue.serverTimestamp(),
+            })
+            .catch((error) => {
+              console.error('Error updating location:', error);
+            });
+        }
       },
       (error) => {
         console.log('Location error:', error);
+        // Try again with less strict settings
+        Geolocation.getCurrentPosition(
+          (position) => {
+            const newLocation = {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            };
+            setUserLocation(newLocation);
+            console.log('Location fetched (retry):', newLocation);
+            
+            // Save location to Firebase
+            if (user?.uid) {
+              firestore()
+                .collection('user_locations')
+                .doc(user.uid)
+                .set({
+                  latitude: newLocation.latitude,
+                  longitude: newLocation.longitude,
+                  address: 'Barangay Lalaan 2',
+                  updatedAt: firestore.FieldValue.serverTimestamp(),
+                })
+                .catch((error) => {
+                  console.error('Error updating location:', error);
+                });
+            }
+          },
+          (retryError) => {
+            console.log('Location retry error:', retryError);
+          },
+          { enableHighAccuracy: false, timeout: 30000, maximumAge: 60000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }
     );
   };
 
@@ -139,28 +324,6 @@ const MapHomeScreen = ({ navigation }: any) => {
     setShowAddFriendModal(false);
     // TODO: Add to database/state
   };
-
-  // Sample location data within Barangay Lalaan 2
-  const locationUsers: LocationUser[] = [
-    {
-      id: '1',
-      name: 'bakitman',
-      location: 'Toledo Barangay Hall',
-      type: 'friend',
-      latitude: 14.14948449482489,
-      longitude: 120.95596752549143,
-      avatar: '👤',
-    },
-    {
-      id: '2',
-      name: 'lastikman',
-      location: 'MX Driving Academy',
-      type: 'family',
-      latitude: 14.162131166877396,
-      longitude: 120.95829189756806,
-      avatar: '👤',
-    },
-  ];
 
   // Local Risk Areas
   const riskAreas: RiskArea[] = [
@@ -395,6 +558,33 @@ const MapHomeScreen = ({ navigation }: any) => {
                 </View>
               </Marker>
             ))}
+
+          {/* Route Polyline */}
+          {showingRoute && routeCoordinates.length > 0 && (
+            <Polyline
+              key={`route-${showingRoute}-${routeCoordinates.length}`}
+              coordinates={routeCoordinates}
+              strokeColor="#3B82F6"
+              strokeWidth={4}
+              lineDashPattern={[0]}
+            />
+          )}
+          
+          {/* Starting Point Marker (User Location) */}
+          {showingRoute && userLocation && (
+            <Marker
+              key={`user-marker-${showingRoute}`}
+              coordinate={userLocation}
+              title="Your Location"
+              description="Starting point"
+            >
+              <View style={styles.userLocationMarker}>
+                <View style={styles.userLocationInner}>
+                  <Text style={styles.userLocationText}>📍</Text>
+                </View>
+              </View>
+            </Marker>
+          )}
 
           {/* Barangay Center Marker */}
           <Marker

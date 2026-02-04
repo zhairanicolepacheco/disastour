@@ -21,14 +21,26 @@ import { colors } from '../config/colors';
 
 // Import modals
 import AddContactModal from '../components/modals/AddContactModal';
-import AddFamilyModal, { FamilyMemberData } from '../components/modals/AddFamilyModal';
-import AddFriendModal, { FriendData } from '../components/modals/AddFriendModal';
+import AddFamilyModal, {
+  FamilyMemberData,
+} from '../components/modals/AddFamilyModal';
+import AddFriendModal, {
+  FriendData,
+} from '../components/modals/AddFriendModal';
 
-interface Contact {
+interface FamilyMember {
   id: string;
-  name: string;
-  type: 'family' | 'friend';
-  avatar: string;
+  displayName: string;
+  nickname: string;
+  relationship: string;
+  photoURL?: string;
+}
+
+interface Friend {
+  id: string;
+  displayName: string;
+  nickname: string;
+  photoURL?: string;
 }
 
 interface UserProfile {
@@ -48,6 +60,8 @@ const ProfileScreen = ({ navigation }: any) => {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [friends, setFriends] = useState<Friend[]>([]);
 
   const loadUserProfile = async () => {
     const authInstance = getAuth();
@@ -59,10 +73,7 @@ const ProfileScreen = ({ navigation }: any) => {
     }
 
     try {
-      const userDoc = await firestore()
-        .collection('users')
-        .doc(user.uid)
-        .get();
+      const userDoc = await firestore().collection('users').doc(user.uid).get();
 
       if (userDoc.exists()) {
         const data = userDoc.data();
@@ -98,14 +109,88 @@ const ProfileScreen = ({ navigation }: any) => {
     }
   };
 
+  // Load family members from Firebase
+  const loadFamilyMembers = () => {
+    const authInstance = getAuth();
+    const user = authInstance.currentUser;
+
+    if (!user?.uid) return;
+
+    const unsubscribe = firestore()
+      .collection('family')
+      .doc(user.uid)
+      .collection('userFamily')
+      .onSnapshot(
+        snapshot => {
+          const members: FamilyMember[] = [];
+          snapshot.forEach(doc => {
+            const data = doc.data();
+            members.push({
+              id: doc.id,
+              displayName: data.userName || data.displayName || 'Unknown',
+              nickname: data.nickname || '',
+              relationship: data.relationship || 'Other',
+              photoURL: data.photoURL || '',
+            });
+          });
+          setFamilyMembers(members);
+        },
+        error => {
+          console.error('Error loading family members:', error);
+        },
+      );
+
+    return unsubscribe;
+  };
+
+  // Load friends from Firebase
+  const loadFriends = () => {
+    const authInstance = getAuth();
+    const user = authInstance.currentUser;
+
+    if (!user?.uid) return;
+
+    const unsubscribe = firestore()
+      .collection('friends')
+      .doc(user.uid)
+      .collection('userFriends')
+      .onSnapshot(
+        snapshot => {
+          const friendsList: Friend[] = [];
+          snapshot.forEach(doc => {
+            const data = doc.data();
+            friendsList.push({
+              id: doc.id,
+              displayName: data.userName || data.displayName || 'Unknown',
+              nickname: data.nickname || '',
+              photoURL: data.photoURL || '',
+            });
+          });
+          setFriends(friendsList);
+        },
+        error => {
+          console.error('Error loading friends:', error);
+        },
+      );
+
+    return unsubscribe;
+  };
+
   useEffect(() => {
     loadUserProfile();
+    const unsubscribeFamily = loadFamilyMembers();
+    const unsubscribeFriends = loadFriends();
+
+    return () => {
+      if (unsubscribeFamily) unsubscribeFamily();
+      if (unsubscribeFriends) unsubscribeFriends();
+    };
   }, []);
 
   useFocusEffect(
     React.useCallback(() => {
       loadUserProfile();
-    }, [])
+    }, []),
   );
 
   const onRefresh = async () => {
@@ -127,38 +212,27 @@ const ProfileScreen = ({ navigation }: any) => {
 
   const handleFamilySubmit = (data: FamilyMemberData) => {
     console.log('Family member added:', data);
-    Alert.alert('Success', `${data.name} has been added to your family contacts`);
+    Alert.alert('Success', `Request sent to ${data.nickname || data.email}`);
     setShowAddFamilyModal(false);
-    // TODO: Add to database/state
   };
 
   const handleFriendSubmit = (data: FriendData) => {
     console.log('Friend added:', data);
-    Alert.alert('Success', `Request sent to ${data.name}`);
+    Alert.alert('Success', `Request sent to ${data.nickname || data.email}`);
     setShowAddFriendModal(false);
-    // TODO: Add to database/state
   };
 
-  const contacts: Contact[] = [
-    { id: '1', name: 'lastikman', type: 'family', avatar: '👤' },
-    { id: '2', name: 'bakitman', type: 'friend', avatar: '👤' },
-  ];
-
   const handleSignOut = async () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            await authService.signOut();
-          },
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          await authService.signOut();
         },
-      ]
-    );
+      },
+    ]);
   };
 
   if (loading) {
@@ -176,7 +250,7 @@ const ProfileScreen = ({ navigation }: any) => {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl
@@ -189,7 +263,7 @@ const ProfileScreen = ({ navigation }: any) => {
       >
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.backButton}
             onPress={() => navigation.goBack()}
           >
@@ -198,7 +272,7 @@ const ProfileScreen = ({ navigation }: any) => {
 
           <Text style={styles.headerTitle}>Profile</Text>
 
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.editButton}
             onPress={() => navigation.navigate('EditProfile')}
           >
@@ -209,8 +283,8 @@ const ProfileScreen = ({ navigation }: any) => {
         {/* Profile Avatar */}
         <View style={styles.avatarSection}>
           {userProfile?.photoURL ? (
-            <Image 
-              source={{ uri: userProfile.photoURL }} 
+            <Image
+              source={{ uri: userProfile.photoURL }}
               style={styles.avatarLarge}
             />
           ) : (
@@ -251,7 +325,12 @@ const ProfileScreen = ({ navigation }: any) => {
 
           <View style={styles.detailCard}>
             <Text style={styles.detailLabel}>Address</Text>
-            <Text style={[styles.detailValue, !userProfile?.address && styles.detailValueEmpty]}>
+            <Text
+              style={[
+                styles.detailValue,
+                !userProfile?.address && styles.detailValueEmpty,
+              ]}
+            >
               {userProfile?.address || 'Not set'}
             </Text>
           </View>
@@ -259,92 +338,132 @@ const ProfileScreen = ({ navigation }: any) => {
 
         {/* Family Section */}
         <View style={styles.section}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.sectionHeader}
             onPress={() => setShowFamily(!showFamily)}
           >
             <Text style={styles.sectionTitle}>
-              Family ({contacts.filter(c => c.type === 'family').length})
+              Family ({familyMembers.length})
             </Text>
             <Text style={styles.collapseIcon}>{showFamily ? '▼' : '▶'}</Text>
           </TouchableOpacity>
 
           {showFamily && (
             <View style={styles.contactsList}>
-              {contacts
-                .filter(c => c.type === 'family')
-                .map(contact => (
-                  <View key={contact.id} style={styles.contactCard}>
-                    <View style={styles.contactAvatar}>
-                      <Text style={styles.contactAvatarText}>
-                        {contact.name.charAt(0).toUpperCase()}
-                      </Text>
+              {familyMembers.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>
+                    No family members yet
+                  </Text>
+                  <Text style={styles.emptyStateSubtext}>
+                    Tap the + button to add family
+                  </Text>
+                </View>
+              ) : (
+                familyMembers.map(member => {
+                  const displayText =
+                    member.nickname || member.displayName || 'Unknown';
+                  return (
+                    <View key={member.id} style={styles.contactCard}>
+                      {member.photoURL ? (
+                        <Image
+                          source={{ uri: member.photoURL }}
+                          style={styles.contactAvatar}
+                        />
+                      ) : (
+                        <View style={styles.contactAvatar}>
+                          <Text style={styles.contactAvatarText}>
+                            {displayText.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={styles.contactInfo}>
+                        <Text style={styles.contactName}>{displayText}</Text>
+                        <Text style={styles.contactRelationship}>
+                          {member.relationship}
+                        </Text>
+                      </View>
                     </View>
-                    <Text style={styles.contactName}>{contact.name}</Text>
-                  </View>
-                ))}
+                  );
+                })
+              )}
             </View>
           )}
         </View>
 
         {/* Friends Section */}
         <View style={styles.section}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.sectionHeader}
             onPress={() => setShowFriends(!showFriends)}
           >
-            <Text style={styles.sectionTitle}>
-              Friends ({contacts.filter(c => c.type === 'friend').length})
-            </Text>
+            <Text style={styles.sectionTitle}>Friends ({friends.length})</Text>
             <Text style={styles.collapseIcon}>{showFriends ? '▼' : '▶'}</Text>
           </TouchableOpacity>
 
           {showFriends && (
             <View style={styles.contactsList}>
-              {contacts
-                .filter(c => c.type === 'friend')
-                .map(contact => (
-                  <View key={contact.id} style={styles.contactCard}>
-                    <View style={styles.contactAvatar}>
-                      <Text style={styles.contactAvatarText}>
-                        {contact.name.charAt(0).toUpperCase()}
-                      </Text>
+              {friends.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No friends yet</Text>
+                  <Text style={styles.emptyStateSubtext}>
+                    Tap the + button to add friends
+                  </Text>
+                </View>
+              ) : (
+                friends.map(friend => {
+                  const displayText =
+                    friend.nickname || friend.displayName || 'Unknown';
+                  return (
+                    <View key={friend.id} style={styles.contactCard}>
+                      {friend.photoURL ? (
+                        <Image
+                          source={{ uri: friend.photoURL }}
+                          style={styles.contactAvatar}
+                        />
+                      ) : (
+                        <View style={styles.contactAvatar}>
+                          <Text style={styles.contactAvatarText}>
+                            {displayText.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={styles.contactInfo}>
+                        <Text style={styles.contactName}>{displayText}</Text>
+                      </View>
                     </View>
-                    <Text style={styles.contactName}>{contact.name}</Text>
-                  </View>
-                ))}
+                  );
+                })
+              )}
             </View>
           )}
         </View>
 
         {/* Sign Out Button */}
-        <TouchableOpacity 
-          style={styles.signOutButton}
-          onPress={handleSignOut}
-        >
+        <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
 
       {/* Bottom Navigation */}
       <View style={styles.bottomNav}>
-        <TouchableOpacity 
-          style={styles.navItem} 
+        <TouchableOpacity
+          style={styles.navItem}
           onPress={() => navigation.navigate('Hotline')}
         >
           <Text style={styles.navIcon}>📞</Text>
           <Text style={styles.navLabel}>Hotline</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.navItem} 
+        <TouchableOpacity
+          style={styles.navItem}
           onPress={() => navigation.navigate('Home')}
         >
           <Text style={styles.navIcon}>📍</Text>
           <Text style={styles.navLabel}>Location</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.navItemCenter}
           onPress={() => setShowAddModal(true)}
         >
@@ -353,16 +472,16 @@ const ProfileScreen = ({ navigation }: any) => {
           </View>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.navItem} 
+        <TouchableOpacity
+          style={styles.navItem}
           onPress={() => navigation.navigate('CheckIn')}
         >
           <Text style={styles.navIcon}>✓</Text>
           <Text style={styles.navLabel}>Check-in</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.navItem} 
+        <TouchableOpacity
+          style={styles.navItem}
           onPress={() => navigation.navigate('Notifications')}
         >
           <Text style={styles.navIcon}>🔔</Text>
@@ -531,6 +650,22 @@ const styles = StyleSheet.create({
   contactsList: {
     gap: 12,
   },
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 20,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  emptyStateSubtext: {
+    fontSize: 14,
+    color: '#94A3B8',
+    textAlign: 'center',
+  },
   contactCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -554,10 +689,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  contactInfo: {
+    flex: 1,
+  },
   contactName: {
     fontSize: 16,
     fontWeight: '600',
     color: '#1E293B',
+  },
+  contactRelationship: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    textTransform: 'capitalize',
   },
   signOutButton: {
     marginHorizontal: 20,

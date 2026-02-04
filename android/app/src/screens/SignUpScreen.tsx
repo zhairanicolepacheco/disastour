@@ -11,6 +11,7 @@ import {
   KeyboardAvoidingView,
   StatusBar,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -29,12 +30,12 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [checkingVerification, setCheckingVerification] = useState(false);
+  const [checkingNow, setCheckingNow] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     const authInstance = getAuth();
-    const subscriber = onAuthStateChanged(authInstance, (user) => {
+    const subscriber = onAuthStateChanged(authInstance, user => {
       setCurrentUser(user);
     });
     return subscriber;
@@ -60,7 +61,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                   // Auth state will automatically update and navigate
                 },
               },
-            ]
+            ],
           );
           if (intervalId) clearInterval(intervalId);
         }
@@ -108,7 +109,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
       setEmailSent(true);
       Alert.alert(
         'Success',
-        'Verification email sent! Please check your inbox and click the verification link.'
+        'Verification email sent! Please check your inbox and click the verification link.',
       );
     } else {
       Alert.alert('Sign Up Failed', result?.error || 'An error occurred');
@@ -131,7 +132,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
     setCheckingVerification(true);
     try {
       const result = await authService.checkEmailVerified();
-      
+
       if (result.verified) {
         Alert.alert(
           'Email Verified! ✅',
@@ -143,28 +144,53 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                 // Auth state will automatically update and navigate
               },
             },
-          ]
+          ],
         );
       } else {
         Alert.alert(
           'Not Verified Yet',
           'Your email is not verified yet. Please check your inbox and click the verification link.',
-          [{ text: 'OK' }]
+          [{ text: 'OK' }],
         );
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to check verification status');
+      Alert.alert(
+        'Error',
+        error.message || 'Failed to check verification status',
+      );
     } finally {
       setCheckingVerification(false);
     }
   };
 
-  if (emailSent && currentUser) {
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await handleManualCheck();
+    setRefreshing(false);
+  };
+
+  if (emailSent) {
+    const authInstance = getAuth();
+    const currentUser = authInstance.currentUser;
+    const displayEmail = currentUser?.email || email;
+
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#3B82F6']}
+              tintColor="#3B82F6"
+              title="Pull to check verification"
+              titleColor="#64748B"
+            />
+          }
+        >
           <View style={styles.content}>
-            <TouchableOpacity 
+            <TouchableOpacity
               onPress={() => navigation.goBack()}
               style={styles.backButton}
             >
@@ -177,7 +203,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                   <Text style={styles.icon}>✓</Text>
                 </View>
               </View>
-              
+
               <Text style={styles.verificationTitle}>Check Your Email</Text>
               <Text style={styles.verificationSubtitle}>
                 We sent a verification link to
@@ -188,14 +214,22 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
 
               <View style={styles.instructionCard}>
                 <Text style={styles.instructionText}>
-                  Click the link in your email to verify your account and start using Disastour.
+                  Click the link in your email to verify your account and start
+                  using Disastour.
                 </Text>
               </View>
 
               <View style={styles.steps}>
                 <Step number="1" text="Check your email inbox" />
                 <Step number="2" text="Click the verification link" />
-                <Step number="3" text="Complete your profile" />
+                <Step number="3" text="Wait for automatic sign-in" />
+              </View>
+
+              <View style={styles.refreshHint}>
+                <Text style={styles.refreshHintIcon}>👇</Text>
+                <Text style={styles.refreshHintText}>
+                  Pull down to refresh verification status
+                </Text>
               </View>
 
               <TouchableOpacity
@@ -208,7 +242,9 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                 ) : (
                   <>
                     {/* <Text style={styles.checkButtonIcon}>✅</Text> */}
-                    <Text style={styles.checkButtonText}>I've Verified My Email</Text>
+                    <Text style={styles.checkButtonText}>
+                      I've Verified My Email
+                    </Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -223,7 +259,9 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                 ) : (
                   <>
                     {/* <Text style={styles.resendButtonIcon}>🔄</Text> */}
-                    <Text style={styles.resendButtonText}>Resend Verification Email</Text>
+                    <Text style={styles.resendButtonText}>
+                      Resend Verification Email
+                    </Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -243,7 +281,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />      
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.container}
@@ -500,7 +538,7 @@ const styles = StyleSheet.create({
   steps: {
     width: '100%',
     gap: 16,
-    marginBottom: 32,
+    marginBottom: 24,
   },
   step: {
     flexDirection: 'row',
@@ -530,6 +568,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#334155',
     fontWeight: '500',
+  },
+  refreshHint: {
+    backgroundColor: '#DBEAFE',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  refreshHintIcon: {
+    fontSize: 16,
+  },
+  refreshHintText: {
+    fontSize: 13,
+    color: '#1E40AF',
+    fontWeight: '600',
   },
   checkButton: {
     backgroundColor: '#3B82F6',
