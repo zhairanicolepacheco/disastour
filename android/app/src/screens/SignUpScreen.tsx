@@ -308,12 +308,12 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                 <Step number="3" text="Wait for automatic sign-in" />
               </View>
 
-              <View style={styles.refreshHint}>
+              {/* <View style={styles.refreshHint}>
                 <Text style={styles.refreshHintIcon}>👇</Text>
                 <Text style={styles.refreshHintText}>
                   Pull down to refresh verification status
                 </Text>
-              </View>
+              </View> */}
 
               <TouchableOpacity
                 style={styles.checkButton}
