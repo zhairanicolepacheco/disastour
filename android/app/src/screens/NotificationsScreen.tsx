@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
 import { colors } from '../config/colors';
+import notificationService from '../services/notificationService';
 
 // Import modals
 import AddContactModal from '../components/modals/AddContactModal';
@@ -221,6 +222,32 @@ const NotificationsScreen = ({ navigation }: any) => {
     setShowAddFriendModal(false);
   };
 
+  const handleNotificationToggle = async (value: boolean) => {
+    if (value) {
+      const granted = await notificationService.requestPermission();
+      if (granted) {
+        setNotificationsEnabled(true);
+        // Reinitialize notification service if user is logged in
+        if (user) {
+          await notificationService.initialize(user.uid);
+        }
+        Alert.alert('Success', 'Notifications enabled');
+      } else {
+        Alert.alert(
+          'Permission Denied',
+          'Please enable notifications in your device settings:\nSettings > Apps > Disastour > Notifications'
+        );
+        setNotificationsEnabled(false);
+      }
+    } else {
+      setNotificationsEnabled(false);
+      Alert.alert(
+        'Notifications Disabled',
+        'You will not receive emergency alerts. You can re-enable them anytime.'
+      );
+    }
+  };
+
   const getNotificationIcon = (type: string, status?: string) => {
     if (type === 'checkin') {
       switch (status) {
@@ -333,6 +360,21 @@ const NotificationsScreen = ({ navigation }: any) => {
       >
         {/* Request Cards */}
         <View style={styles.requestsSection}>
+        {/* <TouchableOpacity
+          style={[styles.requestCard, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}
+          onPress={() => notificationService.sendTestNotification()}
+        >
+          <View style={[styles.requestIcon, { backgroundColor: '#FEF9E7' }]}>
+            <Text style={styles.requestIconText}>🧪</Text>
+          </View>
+          <View style={styles.requestInfo}>
+            <Text style={styles.requestTitle}>Test Notification</Text>
+            <Text style={styles.requestSubtitle}>
+              Send a test notification
+            </Text>
+          </View>
+          <Text style={styles.requestArrow}>→</Text>
+        </TouchableOpacity> */}
           <TouchableOpacity
             style={styles.requestCard}
             onPress={() => navigation.navigate('FriendRequests')}
@@ -392,7 +434,7 @@ const NotificationsScreen = ({ navigation }: any) => {
           </View>
           <Switch
             value={notificationsEnabled}
-            onValueChange={setNotificationsEnabled}
+            onValueChange={handleNotificationToggle}  // Change this line
             trackColor={{ false: '#E2E8F0', true: '#3B82F6' }}
             thumbColor="#FFFFFF"
             ios_backgroundColor="#E2E8F0"

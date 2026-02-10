@@ -324,7 +324,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <>
-                    <Text style={styles.checkButtonIcon}>🔄</Text>
+                    {/* <Text style={styles.checkButtonIcon}></Text> */}
                     <Text style={styles.checkButtonText}>Check Verification Status</Text>
                   </>
                 )}
@@ -345,12 +345,12 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                 )}
               </TouchableOpacity>
 
-              <View style={styles.autoCheckNotice}>
+              {/* <View style={styles.autoCheckNotice}>
                 <ActivityIndicator size="small" color="#92400E" style={{ marginRight: 8 }} />
                 <Text style={styles.autoCheckText}>
                   Checking verification status automatically...
                 </Text>
-              </View>
+              </View> */}
 
               <View style={styles.helpCard}>
                 <Text style={styles.helpTitle}>💡 Didn't receive the email?</Text>

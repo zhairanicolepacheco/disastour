@@ -7,7 +7,9 @@ import { ActivityIndicator, View } from 'react-native';
 import { getAuth, onAuthStateChanged } from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
 import { colors } from '../config/colors';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import LocationPermissionScreen from '../screens/LocationPermissionScreen';
 import GetStartedScreen from '../screens/GetStartedScreen';
 import SignUpScreen from '../screens/SignUpScreen';
 import SignInScreen from '../screens/SignInScreen';
@@ -23,6 +25,7 @@ import FriendRequestsScreen from '../screens/FriendRequestsScreen';
 import FamilyRequestsScreen from '../screens/FamilyRequestsScreen';
 
 export type RootStackParamList = {
+  LocationPermission: undefined;
   GetStarted: undefined;
   SignUp: undefined;
   SignIn: undefined;
@@ -44,7 +47,18 @@ export const RootNavigator = () => {
   const [initializing, setInitializing] = useState(true);
   const [user, setUser] = useState<any>(null);
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
+  const [hasSeenPermission, setHasSeenPermission] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
+  // First useEffect - Check AsyncStorage
+  useEffect(() => {
+    AsyncStorage.getItem('hasSeenLocationPermission').then(value => {
+      setHasSeenPermission(value === 'true');
+      setIsLoading(false);
+    });
+  }, []);
+
+  // Second useEffect - Auth listener
   useEffect(() => {
     const authInstance = getAuth();
     const subscriber = onAuthStateChanged(authInstance, async (user) => {
@@ -87,7 +101,8 @@ export const RootNavigator = () => {
     return subscriber;
   }, []);
 
-  if (initializing || (user && user.emailVerified && hasProfile === null)) {
+  // Show loading screen while checking AsyncStorage or initializing auth
+  if (isLoading || initializing || (user && user.emailVerified && hasProfile === null)) {
     return (
       <View
         style={{
@@ -102,12 +117,23 @@ export const RootNavigator = () => {
     );
   }
 
+  const getInitialRouteName = () => {
+    if (user == null || !user.emailVerified) {
+      return hasSeenPermission ? "GetStarted" : "LocationPermission";
+    } else if (!hasProfile) {
+      return "ProfileDetails";
+    } else {
+      return "Home";
+    }
+  };
+
   return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Navigator initialRouteName={getInitialRouteName()} screenOptions={{ headerShown: false }}>
         {user == null || !user.emailVerified ? (
           // Not logged in or email not verified
           <>
+            <Stack.Screen name="LocationPermission" component={LocationPermissionScreen} />
             <Stack.Screen name="GetStarted" component={GetStartedScreen} />
             <Stack.Screen name="SignUp" component={SignUpScreen} />
             <Stack.Screen name="SignIn" component={SignInScreen} />
