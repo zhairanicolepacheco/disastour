@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
+import NetInfo from '@react-native-community/netinfo';
 import { colors } from '../config/colors';
 import notificationService from '../services/notificationService';
 
@@ -36,6 +37,25 @@ interface Notification {
   createdAt: any;
 }
 
+// Helper function to generate detailed check-in messages
+const getCheckInMessage = (type: string, status: string | undefined, userName: string, location?: string) => {
+  if (type === 'checkin' && status) {
+    const locationText = location ? ` at ${location}` : '';
+    
+    switch (status) {
+      case 'safe':
+        return `${userName} checked in as "I'm Safe"${locationText}. No assistance needed.`;
+      case 'warning':
+        return `${userName} checked in as "Need Attention"${locationText} and requires monitoring. Please check on them.`;
+      case 'danger':
+        return `${userName} checked in as "EMERGENCY"${locationText}! Immediate assistance required. Contact emergency services!`;
+      default:
+        return `${userName} has checked in${locationText}.`;
+    }
+  }
+  return null;
+};
+
 const NotificationsScreen = ({ navigation }: any) => {
   const authInstance = getAuth();
   const user = authInstance.currentUser;
@@ -48,6 +68,21 @@ const NotificationsScreen = ({ navigation }: any) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddFamilyModal, setShowAddFamilyModal] = useState(false);
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+
+  // Network status monitoring
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      const online = (state.isConnected && state.isInternetReachable) ?? false;
+      setIsOnline(online);
+      
+      if (!online) {
+        console.log('📡 Offline - Notifications will not update in real-time');
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -145,6 +180,11 @@ const NotificationsScreen = ({ navigation }: any) => {
   };
 
   const markAsRead = async (notificationId: string) => {
+    if (!isOnline) {
+      Alert.alert('Offline', 'Cannot mark as read while offline');
+      return;
+    }
+
     try {
       await firestore()
         .collection('notifications')
@@ -156,6 +196,11 @@ const NotificationsScreen = ({ navigation }: any) => {
   };
 
   const markAllAsRead = async () => {
+    if (!isOnline) {
+      Alert.alert('Offline', 'Cannot mark notifications as read while offline');
+      return;
+    }
+
     try {
       const batch = firestore().batch();
       const unreadNotifs = notifications.filter(n => !n.read);
@@ -174,6 +219,11 @@ const NotificationsScreen = ({ navigation }: any) => {
   };
 
   const clearAll = async () => {
+    if (!isOnline) {
+      Alert.alert('Offline', 'Cannot clear notifications while offline');
+      return;
+    }
+
     Alert.alert(
       'Clear All Notifications',
       'Are you sure you want to delete all notifications?',
@@ -227,7 +277,6 @@ const NotificationsScreen = ({ navigation }: any) => {
       const granted = await notificationService.requestPermission();
       if (granted) {
         setNotificationsEnabled(true);
-        // Reinitialize notification service if user is logged in
         if (user) {
           await notificationService.initialize(user.uid);
         }
@@ -353,6 +402,19 @@ const NotificationsScreen = ({ navigation }: any) => {
         <View style={styles.placeholder} />
       </View>
 
+      {/* Offline Banner */}
+      {!isOnline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineIcon}>📡</Text>
+          <View style={styles.offlineContent}>
+            <Text style={styles.offlineTitle}>Offline Mode</Text>
+            <Text style={styles.offlineSubtitle}>
+              Real-time notifications unavailable
+            </Text>
+          </View>
+        </View>
+      )}
+
       <ScrollView 
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -360,21 +422,6 @@ const NotificationsScreen = ({ navigation }: any) => {
       >
         {/* Request Cards */}
         <View style={styles.requestsSection}>
-        {/* <TouchableOpacity
-          style={[styles.requestCard, { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }]}
-          onPress={() => notificationService.sendTestNotification()}
-        >
-          <View style={[styles.requestIcon, { backgroundColor: '#FEF9E7' }]}>
-            <Text style={styles.requestIconText}>🧪</Text>
-          </View>
-          <View style={styles.requestInfo}>
-            <Text style={styles.requestTitle}>Test Notification</Text>
-            <Text style={styles.requestSubtitle}>
-              Send a test notification
-            </Text>
-          </View>
-          <Text style={styles.requestArrow}>→</Text>
-        </TouchableOpacity> */}
           <TouchableOpacity
             style={styles.requestCard}
             onPress={() => navigation.navigate('FriendRequests')}
@@ -434,7 +481,7 @@ const NotificationsScreen = ({ navigation }: any) => {
           </View>
           <Switch
             value={notificationsEnabled}
-            onValueChange={handleNotificationToggle}  // Change this line
+            onValueChange={handleNotificationToggle}
             trackColor={{ false: '#E2E8F0', true: '#3B82F6' }}
             thumbColor="#FFFFFF"
             ios_backgroundColor="#E2E8F0"
@@ -493,7 +540,7 @@ const NotificationsScreen = ({ navigation }: any) => {
                   !notification.read && styles.notificationUnread,
                 ]}
                 onPress={() => {
-                  if (!notification.read) {
+                  if (!notification.read && isOnline) {
                     markAsRead(notification.id);
                   }
                 }}
@@ -522,9 +569,17 @@ const NotificationsScreen = ({ navigation }: any) => {
                     )}
                   </View>
                   <Text style={styles.notificationMessage}>
-                    {notification.message}
+                    {notification.type === 'checkin' 
+                      ? getCheckInMessage(
+                          notification.type, 
+                          notification.status, 
+                          notification.fromUserName || 'Someone',
+                          notification.location
+                        )
+                      : notification.message
+                    }
                   </Text>
-                  {notification.location && (
+                  {notification.location && notification.type !== 'checkin' && (
                     <Text style={styles.notificationLocation}>
                       📍 {notification.location}
                     </Text>
@@ -544,11 +599,11 @@ const NotificationsScreen = ({ navigation }: any) => {
             <TouchableOpacity 
               style={styles.actionButton}
               onPress={markAllAsRead}
-              disabled={unreadCount === 0}
+              disabled={unreadCount === 0 || !isOnline}
             >
               <Text style={[
                 styles.actionButtonText,
-                unreadCount === 0 && styles.actionButtonDisabled
+                (unreadCount === 0 || !isOnline) && styles.actionButtonDisabled
               ]}>
                 Mark All as Read
               </Text>
@@ -557,8 +612,14 @@ const NotificationsScreen = ({ navigation }: any) => {
             <TouchableOpacity 
               style={[styles.actionButton, styles.clearButton]}
               onPress={clearAll}
+              disabled={!isOnline}
             >
-              <Text style={styles.clearButtonText}>Clear All</Text>
+              <Text style={[
+                styles.clearButtonText,
+                !isOnline && styles.actionButtonDisabled
+              ]}>
+                Clear All
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -671,6 +732,33 @@ const styles = StyleSheet.create({
   },
   placeholder: {
     width: 40,
+  },
+  offlineBanner: {
+    backgroundColor: '#FEF3C7',
+    borderBottomWidth: 1,
+    borderBottomColor: '#FDE68A',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  offlineIcon: {
+    fontSize: 24,
+  },
+  offlineContent: {
+    flex: 1,
+  },
+  offlineTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#92400E',
+    marginBottom: 2,
+  },
+  offlineSubtitle: {
+    fontSize: 12,
+    color: '#92400E',
+    opacity: 0.8,
   },
   scrollView: {
     flex: 1,

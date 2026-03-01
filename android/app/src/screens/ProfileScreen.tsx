@@ -42,9 +42,11 @@ interface Friend {
 interface UserProfile {
   displayName: string | null;
   email: string | null;
+  phoneNumber: string | null;
   photoURL: string | null;
   contactNumber: string | null;
   address: string | null;
+  authMethod?: 'email' | 'phone';
 }
 
 const ProfileScreen = ({ navigation }: any) => {
@@ -69,6 +71,11 @@ const ProfileScreen = ({ navigation }: any) => {
     }
 
     try {
+      // Determine auth method
+      const isEmailUser = user.email && user.emailVerified;
+      const isPhoneUser = user.phoneNumber && !user.email;
+      const authMethod = isEmailUser ? 'email' : 'phone';
+
       const userDoc = await firestore()
         .collection('users')
         .doc(user.uid)
@@ -79,29 +86,39 @@ const ProfileScreen = ({ navigation }: any) => {
         setUserProfile({
           displayName: data?.displayName || user.displayName || null,
           email: data?.email || user.email || null,
+          phoneNumber: data?.phoneNumber || user.phoneNumber || null,
           photoURL: data?.photoURL || user.photoURL || null,
-          contactNumber: data?.contactNumber || data?.phoneNumber || null,
+          contactNumber: data?.contactNumber || data?.phoneNumber || user.phoneNumber || null,
           address: data?.address || null,
+          authMethod: data?.authMethod || authMethod,
         });
       } else {
+        // Fallback to Firebase Auth data
         setUserProfile({
           displayName: user.displayName || null,
           email: user.email || null,
+          phoneNumber: user.phoneNumber || null,
           photoURL: user.photoURL || null,
-          contactNumber: null,
+          contactNumber: user.phoneNumber || null,
           address: null,
+          authMethod: authMethod,
         });
       }
     } catch (error) {
       console.error('Error loading profile:', error);
       const authInstance = getAuth();
       const user = authInstance.currentUser;
+      const isEmailUser = user?.email && user.emailVerified;
+      const authMethod = isEmailUser ? 'email' : 'phone';
+      
       setUserProfile({
         displayName: user?.displayName || null,
         email: user?.email || null,
+        phoneNumber: user?.phoneNumber || null,
         photoURL: user?.photoURL || null,
-        contactNumber: null,
+        contactNumber: user?.phoneNumber || null,
         address: null,
+        authMethod: authMethod,
       });
     } finally {
       setLoading(false);
@@ -300,7 +317,12 @@ const ProfileScreen = ({ navigation }: any) => {
           <Text style={styles.userName}>
             {userProfile?.displayName || 'User'}
           </Text>
-          <Text style={styles.userEmail}>{userProfile?.email}</Text>
+          {/* Show email OR phone based on auth method */}
+          {userProfile?.authMethod === 'email' ? (
+            <Text style={styles.userEmail}>{userProfile?.email}</Text>
+          ) : (
+            <Text style={styles.userEmail}>{userProfile?.phoneNumber}</Text>
+          )}
         </View>
 
         {/* User Details Section */}
@@ -312,12 +334,35 @@ const ProfileScreen = ({ navigation }: any) => {
             </Text>
           </View>
 
-          <View style={styles.detailCard}>
-            <Text style={styles.detailLabel}>Email</Text>
-            <Text style={styles.detailValue}>
-              {userProfile?.email || 'Not set'}
-            </Text>
-          </View>
+          {/* Email - only show for email users */}
+          {userProfile?.authMethod === 'email' && (
+            <View style={styles.detailCard}>
+              <View style={styles.detailLabelRow}>
+                <Text style={styles.detailLabel}>Email</Text>
+                <View style={styles.verifiedBadge}>
+                  <Text style={styles.verifiedText}>✓ Verified</Text>
+                </View>
+              </View>
+              <Text style={styles.detailValue}>
+                {userProfile?.email || 'Not set'}
+              </Text>
+            </View>
+          )}
+
+          {/* Phone Number - only show for phone users */}
+          {userProfile?.authMethod === 'phone' && (
+            <View style={styles.detailCard}>
+              <View style={styles.detailLabelRow}>
+                <Text style={styles.detailLabel}>Phone Number</Text>
+                <View style={styles.verifiedBadge}>
+                  <Text style={styles.verifiedText}>✓ Verified</Text>
+                </View>
+              </View>
+              <Text style={styles.detailValue}>
+                {userProfile?.phoneNumber || 'Not set'}
+              </Text>
+            </View>
+          )}
 
           <View style={styles.detailCard}>
             <Text style={styles.detailLabel}>Contact Number</Text>
@@ -621,6 +666,23 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  detailLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  verifiedBadge: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  verifiedText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   detailValue: {
     fontSize: 16,

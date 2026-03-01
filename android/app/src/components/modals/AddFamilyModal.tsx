@@ -21,10 +21,11 @@ interface AddFamilyModalProps {
 }
 
 export interface FamilyMemberData {
-  email: string;
+  email?: string;
+  phoneNumber?: string;
   relationship: string;
   nickname?: string;
-  phoneNumber?: string;
+  contactPhone?: string;
 }
 
 const relationships = [
@@ -39,30 +40,50 @@ const relationships = [
   'Other',
 ];
 
+type ContactMethod = 'email' | 'phone';
+
 const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
   visible,
   onClose,
   onSubmit,
 }) => {
+  const [contactMethod, setContactMethod] = useState<ContactMethod>('email');
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [relationship, setRelationship] = useState('');
   const [nickname, setNickname] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [contactPhone, setContactPhone] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
-    if (!email.trim()) {
-      Alert.alert('Error', 'Please enter an email address');
-      return;
-    }
-    if (!relationship) {
-      Alert.alert('Error', 'Please select a relationship');
-      return;
+    // Validate contact method input
+    if (contactMethod === 'email') {
+      if (!email.trim()) {
+        Alert.alert('Error', 'Please enter an email address');
+        return;
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        Alert.alert('Error', 'Please enter a valid email address');
+        return;
+      }
+    } else {
+      if (!phoneNumber.trim()) {
+        Alert.alert('Error', 'Please enter a phone number');
+        return;
+      }
+      if (!phoneNumber.startsWith('+63')) {
+        Alert.alert('Error', 'Please enter a valid Philippine phone number (+63)');
+        return;
+      }
+      if (phoneNumber.length < 13) {
+        Alert.alert('Error', 'Please enter a complete phone number');
+        return;
+      }
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
-      Alert.alert('Error', 'Please enter a valid email address');
+    if (!relationship) {
+      Alert.alert('Error', 'Please select a relationship');
       return;
     }
 
@@ -78,33 +99,54 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
         return;
       }
 
-      const normalizedEmail = email.trim().toLowerCase();
+      let targetUserDoc;
+      let searchField;
+      let searchValue;
 
-      // Check if trying to add yourself
-      if (normalizedEmail === currentUser.email?.toLowerCase()) {
-        Alert.alert('Error', 'You cannot add yourself as a family member');
-        setLoading(false);
-        return;
+      if (contactMethod === 'email') {
+        const normalizedEmail = email.trim().toLowerCase();
+        
+        // Check if trying to add yourself
+        if (normalizedEmail === currentUser.email?.toLowerCase()) {
+          Alert.alert('Error', 'You cannot add yourself as a family member');
+          setLoading(false);
+          return;
+        }
+
+        searchField = 'email';
+        searchValue = normalizedEmail;
+      } else {
+        const normalizedPhone = phoneNumber.trim();
+        
+        // Check if trying to add yourself
+        if (normalizedPhone === currentUser.phoneNumber) {
+          Alert.alert('Error', 'You cannot add yourself as a family member');
+          setLoading(false);
+          return;
+        }
+
+        searchField = 'phoneNumber';
+        searchValue = normalizedPhone;
       }
 
-      // Search for user by email in Firestore
+      // Search for user by email or phone in Firestore
       const usersSnapshot = await firestore()
         .collection('users')
-        .where('email', '==', normalizedEmail)
+        .where(searchField, '==', searchValue)
         .get();
 
       if (usersSnapshot.empty) {
         Alert.alert(
           'User Not Found',
-          `No user found with email ${email}. They need to create an account first.`
+          `No user found with ${contactMethod === 'email' ? 'email' : 'phone number'} ${searchValue}. They need to create an account first.`
         );
         setLoading(false);
         return;
       }
 
-      const targetUserDoc = usersSnapshot.docs[0];
-      const targetUserId = targetUserDoc.id;
-      const targetUserData = targetUserDoc.data();
+      const targetUserDocSnap = usersSnapshot.docs[0];
+      const targetUserId = targetUserDocSnap.id;
+      const targetUserData = targetUserDocSnap.data();
 
       // Check if already family
       const existingFamily = await firestore()
@@ -139,12 +181,14 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
         fromUserId: currentUser.uid,
         fromUserName: currentUser.displayName || 'User',
         fromUserEmail: currentUser.email || '',
+        fromUserPhone: currentUser.phoneNumber || '',
         toUserId: targetUserId,
         toUserName: targetUserData.displayName || 'User',
         toUserEmail: targetUserData.email || '',
+        toUserPhone: targetUserData.phoneNumber || '',
         relationship: relationship,
         nickname: nickname.trim() || null,
-        phoneNumber: phoneNumber.trim() || null,
+        contactPhone: contactPhone.trim() || null,
         status: 'pending',
         createdAt: firestore.FieldValue.serverTimestamp(),
       });
@@ -162,7 +206,7 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
         createdAt: firestore.FieldValue.serverTimestamp(),
       });
 
-      const displayName = nickname.trim() || targetUserData.displayName || email;
+      const displayName = nickname.trim() || targetUserData.displayName || searchValue;
       Alert.alert(
         'Request Sent!',
         `Family request sent to ${displayName}. They will be added once they accept.`
@@ -170,17 +214,20 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
 
       // Call onSubmit callback
       onSubmit({
-        email: normalizedEmail,
+        email: contactMethod === 'email' ? searchValue : undefined,
+        phoneNumber: contactMethod === 'phone' ? searchValue : undefined,
         relationship,
         nickname: nickname.trim(),
-        phoneNumber: phoneNumber.trim(),
+        contactPhone: contactPhone.trim(),
       });
 
       // Reset form
       setEmail('');
+      setPhoneNumber('');
       setRelationship('');
       setNickname('');
-      setPhoneNumber('');
+      setContactPhone('');
+      setContactMethod('email');
       setLoading(false);
     } catch (error: any) {
       console.error('Error sending family request:', error);
@@ -191,9 +238,11 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
 
   const handleClose = () => {
     setEmail('');
+    setPhoneNumber('');
     setRelationship('');
     setNickname('');
-    setPhoneNumber('');
+    setContactPhone('');
+    setContactMethod('email');
     onClose();
   };
 
@@ -217,25 +266,68 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
             <View style={styles.infoCard}>
               <Text style={styles.infoIcon}>👨‍👩‍👧‍👦</Text>
               <Text style={styles.infoText}>
-                Enter the email address of your family member. They will receive a request and need to accept it.
+                Enter the {contactMethod === 'email' ? 'email' : 'phone number'} of your family member. They will receive a request and need to accept it.
               </Text>
             </View>
 
+            {/* Contact Method Tabs */}
+            <View style={styles.tabContainer}>
+              <TouchableOpacity
+                style={[styles.tab, contactMethod === 'email' && styles.tabActive]}
+                onPress={() => setContactMethod('email')}
+                disabled={loading}
+              >
+                <Text style={styles.tabIcon}>📧</Text>
+                <Text style={[styles.tabText, contactMethod === 'email' && styles.tabTextActive]}>
+                  Email
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.tab, contactMethod === 'phone' && styles.tabActive]}
+                onPress={() => setContactMethod('phone')}
+                disabled={loading}
+              >
+                <Text style={styles.tabIcon}>📱</Text>
+                <Text style={[styles.tabText, contactMethod === 'phone' && styles.tabTextActive]}>
+                  Phone
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.form}>
-              {/* Email Input */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Email Address *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="family@example.com"
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  editable={!loading}
-                  placeholderTextColor="#94A3B8"
-                />
-              </View>
+              {/* Email or Phone Input */}
+              {contactMethod === 'email' ? (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Email Address *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="family@example.com"
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    editable={!loading}
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+              ) : (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Phone Number *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="+63 912 345 6789"
+                    value={phoneNumber}
+                    onChangeText={setPhoneNumber}
+                    keyboardType="phone-pad"
+                    editable={!loading}
+                    placeholderTextColor="#94A3B8"
+                  />
+                  <Text style={styles.helperText}>
+                    Format: +63 XXX XXX XXXX
+                  </Text>
+                </View>
+              )}
 
               {/* Relationship Selection */}
               <View style={styles.inputGroup}>
@@ -280,14 +372,14 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
                 </Text>
               </View>
 
-              {/* Phone Number Input (Optional) */}
+              {/* Emergency Contact Phone (Optional) */}
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Phone Number (Optional)</Text>
+                <Text style={styles.label}>Emergency Contact Number (Optional)</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="+63 912 345 6789"
-                  value={phoneNumber}
-                  onChangeText={setPhoneNumber}
+                  value={contactPhone}
+                  onChangeText={setContactPhone}
                   keyboardType="phone-pad"
                   editable={!loading}
                   placeholderTextColor="#94A3B8"
@@ -369,7 +461,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#EFF6FF',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 24,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: '#BFDBFE',
     flexDirection: 'row',
@@ -384,6 +476,42 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#1E40AF',
     lineHeight: 18,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 24,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 6,
+  },
+  tabActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  tabIcon: {
+    fontSize: 16,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  tabTextActive: {
+    color: '#1E293B',
+    fontWeight: '700',
   },
   form: {
     gap: 20,

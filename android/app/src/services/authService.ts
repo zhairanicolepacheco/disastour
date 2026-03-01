@@ -7,12 +7,17 @@ import {
   onAuthStateChanged,
   updateProfile,
   reload,
+  PhoneAuthProvider,
+  signInWithCredential,
 } from '@react-native-firebase/auth';
 import { FirebaseAuthTypes } from '@react-native-firebase/auth';
 import storage from '@react-native-firebase/storage';
 import { getFirestore, collection, doc, setDoc, getDoc, serverTimestamp } from '@react-native-firebase/firestore';
+import { offlineStorage } from './offlineStorage';
 
 class AuthService {
+  // ==================== EMAIL AUTHENTICATION ====================
+  
   async signUp(email: string, password: string) {
     try {
       const authInstance = getAuth();
@@ -166,37 +171,154 @@ class AuthService {
     }
   }
 
+  // ==================== PHONE AUTHENTICATION ====================
+
+  async signUpWithPhone(phoneNumber: string) {
+    try {
+      console.log('📱 Starting phone signup:', phoneNumber);
+      const authInstance = getAuth();
+
+      // Send verification code
+      const confirmation = await authInstance.signInWithPhoneNumber(phoneNumber);
+      
+      console.log('✅ SMS sent successfully');
+      
+      return { 
+        success: true, 
+        verificationId: confirmation.verificationId,
+        confirmation: confirmation // Store for verification
+      };
+    } catch (error: any) {
+      console.error('❌ Phone signup error:', error);
+      
+      let errorMessage = 'Failed to send verification code';
+      
+      switch (error.code) {
+        case 'auth/invalid-phone-number':
+          errorMessage = 'Invalid phone number format. Use +63XXXXXXXXXX';
+          break;
+        case 'auth/too-many-requests':
+          errorMessage = 'Too many attempts. Please try again later';
+          break;
+        case 'auth/quota-exceeded':
+          errorMessage = 'SMS quota exceeded. Please try again tomorrow';
+          break;
+        case 'auth/network-request-failed':
+          errorMessage = 'Network error. Please check your connection';
+          break;
+        default:
+          errorMessage = error.message || errorMessage;
+      }
+
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  async signInWithPhone(phoneNumber: string) {
+    try {
+      console.log('📱 Starting phone signin:', phoneNumber);
+      const authInstance = getAuth();
+
+      // Send verification code
+      const confirmation = await authInstance.signInWithPhoneNumber(phoneNumber);
+      
+      console.log('✅ SMS sent successfully');
+      
+      return { 
+        success: true, 
+        verificationId: confirmation.verificationId,
+        confirmation: confirmation
+      };
+    } catch (error: any) {
+      console.error('❌ Phone signin error:', error);
+      
+      let errorMessage = 'Failed to send verification code';
+      
+      switch (error.code) {
+        case 'auth/invalid-phone-number':
+          errorMessage = 'Invalid phone number format. Use +63XXXXXXXXXX';
+          break;
+        case 'auth/user-disabled':
+          errorMessage = 'This account has been disabled';
+          break;
+        case 'auth/too-many-requests':
+          errorMessage = 'Too many attempts. Please try again later';
+          break;
+        case 'auth/network-request-failed':
+          errorMessage = 'Network error. Please check your connection';
+          break;
+        default:
+          errorMessage = error.message || errorMessage;
+      }
+
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  async verifyPhoneCode(confirmation: any, code: string) {
+    try {
+      console.log('🔐 Verifying code:', code);
+      
+      // Confirm the verification code
+      const result = await confirmation.confirm(code);
+      
+      console.log('✅ Phone verified successfully');
+      console.log('✅ User ID:', result.user.uid);
+      
+      return { 
+        success: true, 
+        userId: result.user.uid,
+        user: result.user
+      };
+    } catch (error: any) {
+      console.error('❌ Code verification error:', error);
+      
+      let errorMessage = 'Invalid verification code';
+      
+      switch (error.code) {
+        case 'auth/invalid-verification-code':
+          errorMessage = 'Invalid code. Please check and try again';
+          break;
+        case 'auth/code-expired':
+          errorMessage = 'Code expired. Please request a new one';
+          break;
+        case 'auth/session-expired':
+          errorMessage = 'Session expired. Please start over';
+          break;
+        default:
+          errorMessage = error.message || errorMessage;
+      }
+
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  // ==================== COMMON METHODS ====================
+
   async uploadProfileImage(userId: string, imageUri: string) {
     try {
       console.log('📤 Uploading profile image for user:', userId);
       console.log('📁 Image URI:', imageUri);
 
-      // Use the namespaced API for storage (it's still supported)
       const filename = `profile_${userId}_${Date.now()}.jpg`;
       const reference = storage().ref(`profile_images/${filename}`);
 
-      // Upload file using putFile (React Native specific method)
       const task = reference.putFile(imageUri);
 
-      // Optional: Track upload progress
       task.on('state_changed', (snapshot) => {
         const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
         console.log(`📊 Upload progress: ${progress.toFixed(0)}%`);
       });
 
-      // Wait for upload to complete
       await task;
       console.log('✅ Image uploaded to storage');
 
-      // Get the download URL
       const downloadURL = await reference.getDownloadURL();
       console.log('✅ Got download URL:', downloadURL);
 
       return { success: true, imageUrl: downloadURL };
     } catch (error: any) {
       console.error('❌ Image upload error:', error);
-      console.error('❌ Error code:', error.code);
-      console.error('❌ Error message:', error.message);
       
       let errorMessage = 'Failed to upload image';
       
@@ -210,12 +332,6 @@ class AuthService {
         case 'storage/unknown':
           errorMessage = 'Unknown error occurred during upload';
           break;
-        case 'storage/object-not-found':
-          errorMessage = 'File not found';
-          break;
-        case 'storage/invalid-argument':
-          errorMessage = 'Invalid file path or URI';
-          break;
         default:
           errorMessage = error.message || errorMessage;
       }
@@ -224,7 +340,6 @@ class AuthService {
     }
   }
 
-  // NEW METHOD: Get user profile from Firestore
   async getUserProfile(userId: string) {
     try {
       console.log('📖 Fetching user profile:', userId);
@@ -237,13 +352,35 @@ class AuthService {
 
       if (userDoc.exists()) {
         console.log('✅ User profile found');
-        return userDoc.data();
+        const profileData = userDoc.data();
+        
+        // Cache profile data for offline access
+        await offlineStorage.cacheUserProfile(profileData);
+        
+        return profileData;
       } else {
         console.log('⚠️ No user profile found in Firestore');
+        
+        // Try to load cached profile if offline
+        const cachedProfile = await offlineStorage.getCachedUserProfile();
+        if (cachedProfile) {
+          console.log('✅ Loaded cached profile');
+          return cachedProfile;
+        }
+        
         return null;
       }
     } catch (error: any) {
       console.error('❌ Error fetching user profile:', error);
+      
+      // If network error, try cached profile
+      if (error.code === 'unavailable' || error.message.includes('network')) {
+        const cachedProfile = await offlineStorage.getCachedUserProfile();
+        if (cachedProfile) {
+          console.log('✅ Using cached profile (offline)');
+          return cachedProfile;
+        }
+      }
       
       let errorMessage = 'Failed to fetch user profile';
       
@@ -251,7 +388,7 @@ class AuthService {
         case 'permission-denied':
           errorMessage = 'Not authorized to access this profile';
           break;
-        case 'network-request-failed':
+        case 'unavailable':
           errorMessage = 'Network error. Please check your connection';
           break;
         default:
@@ -264,10 +401,12 @@ class AuthService {
 
   async updateUserProfile(userId: string, profileData: {
     displayName: string;
-    email: string;
+    email?: string | null;
+    phoneNumber?: string | null;
     address: string;
-    phoneNumber: string;
+    contactNumber: string;
     photoURL?: string | null;
+    authMethod?: 'email' | 'phone';
   }) {
     try {
       console.log('💾 Updating user profile:', userId);
@@ -276,15 +415,25 @@ class AuthService {
       const usersCollection = collection(firestoreInstance, 'users');
       const userDocRef = doc(usersCollection, userId);
 
-      // Update Firestore document with merge
-      await setDoc(userDocRef, {
+      const updateData: any = {
         displayName: profileData.displayName,
-        email: profileData.email,
         address: profileData.address,
-        phoneNumber: profileData.phoneNumber,
+        contactNumber: profileData.contactNumber,
         photoURL: profileData.photoURL || null,
         updatedAt: serverTimestamp(),
-      }, { merge: true });
+      };
+
+      // Add email or phone based on auth method
+      if (profileData.email) {
+        updateData.email = profileData.email;
+        updateData.authMethod = 'email';
+      }
+      if (profileData.phoneNumber) {
+        updateData.phoneNumber = profileData.phoneNumber;
+        updateData.authMethod = profileData.authMethod || 'phone';
+      }
+
+      await setDoc(userDocRef, updateData, { merge: true });
 
       // Update Firebase Auth profile
       const authInstance = getAuth();
@@ -339,7 +488,6 @@ class AuthService {
         return { verified: false, error: 'No user signed in' };
       }
 
-      // Use the new modular API: reload() function instead of currentUser.reload()
       await reload(currentUser);
       const user = authInstance.currentUser;
 

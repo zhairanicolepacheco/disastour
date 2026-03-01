@@ -23,9 +23,11 @@ import { colors } from '../config/colors';
 interface UserProfileData {
   displayName?: string;
   email?: string;
-  address?: string;
   phoneNumber?: string;
+  address?: string;
+  contactNumber?: string;
   photoURL?: string | null;
+  authMethod?: 'email' | 'phone';
   updatedAt?: any;
   createdAt?: any;
 }
@@ -34,9 +36,15 @@ const EditProfileScreen = ({ navigation }: any) => {
   const authInstance = getAuth();
   const user = authInstance.currentUser;
 
+  // Determine auth method
+  const isEmailUser = user?.email && user.emailVerified;
+  const isPhoneUser = user?.phoneNumber && !user?.email;
+  const authMethod = isEmailUser ? 'email' : 'phone';
+
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [contactNo, setContactNo] = useState('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -57,7 +65,9 @@ const EditProfileScreen = ({ navigation }: any) => {
       const authData: UserProfileData = {
         displayName: user?.displayName || '',
         email: user?.email || '',
+        phoneNumber: user?.phoneNumber || '',
         photoURL: user?.photoURL || null,
+        authMethod: authMethod,
       };
 
       // Try to get additional data from Firestore
@@ -70,14 +80,17 @@ const EditProfileScreen = ({ navigation }: any) => {
         setOriginalData(firestoreData);
         setName(firestoreData.displayName || authData.displayName || '');
         setEmail(firestoreData.email || authData.email || '');
+        setPhoneNumber(firestoreData.phoneNumber || authData.phoneNumber || '');
         setAddress(firestoreData.address || '');
-        setContactNo(firestoreData.phoneNumber || '');
+        setContactNo(firestoreData.contactNumber || authData.phoneNumber || '');
         setProfileImage(firestoreData.photoURL || authData.photoURL || null);
       } else {
         // Fallback to auth data if no database record exists
         setOriginalData(authData);
         setName(authData.displayName || '');
         setEmail(authData.email || '');
+        setPhoneNumber(authData.phoneNumber || '');
+        setContactNo(authData.phoneNumber || '');
         setProfileImage(authData.photoURL || null);
       }
     } catch (error) {
@@ -85,6 +98,8 @@ const EditProfileScreen = ({ navigation }: any) => {
       // Fallback to Firebase Auth data
       setName(user?.displayName || '');
       setEmail(user?.email || '');
+      setPhoneNumber(user?.phoneNumber || '');
+      setContactNo(user?.phoneNumber || '');
       setProfileImage(user?.photoURL || null);
     } finally {
       setFetchingData(false);
@@ -163,10 +178,17 @@ const EditProfileScreen = ({ navigation }: any) => {
       let updatedData: UserProfileData = {
         ...originalData, // Preserve all existing data
         displayName: name.trim(),
-        email: email, // Email usually shouldn't change
         address: address.trim(),
-        phoneNumber: contactNo.trim(),
+        contactNumber: contactNo.trim(),
+        authMethod: authMethod,
       };
+
+      // Set email or phone based on auth method
+      if (authMethod === 'email') {
+        updatedData.email = email;
+      } else {
+        updatedData.phoneNumber = phoneNumber;
+      }
 
       // Upload profile image if changed
       if (profileImage && profileImage !== originalData?.photoURL) {
@@ -195,9 +217,11 @@ const EditProfileScreen = ({ navigation }: any) => {
         {
           displayName: updatedData.displayName || '',
           email: updatedData.email || '',
-          address: updatedData.address || '',
           phoneNumber: updatedData.phoneNumber || '',
+          address: updatedData.address || '',
+          contactNumber: updatedData.contactNumber || '',
           photoURL: updatedData.photoURL || null,
+          authMethod: updatedData.authMethod,
         }
       );
 
@@ -248,6 +272,21 @@ const EditProfileScreen = ({ navigation }: any) => {
             <View style={{ width: 40 }} />
           </View>
 
+          {/* Auth Method Badge */}
+          <View style={styles.authBadgeContainer}>
+            <View style={[
+              styles.authBadge,
+              authMethod === 'email' ? styles.authBadgeEmail : styles.authBadgePhone
+            ]}>
+              <Text style={styles.authBadgeIcon}>
+                {authMethod === 'email' ? '📧' : '📱'}
+              </Text>
+              <Text style={styles.authBadgeText}>
+                Signed up with {authMethod === 'email' ? 'Email' : 'Phone'}
+              </Text>
+            </View>
+          </View>
+
           {/* Profile Avatar */}
           <View style={styles.avatarSection}>
             <TouchableOpacity
@@ -284,21 +323,43 @@ const EditProfileScreen = ({ navigation }: any) => {
               />
             </View>
 
-            <View style={styles.inputGroup}>
-              <View style={styles.labelRow}>
-                <Text style={styles.label}>Email Address</Text>
-                <View style={styles.verifiedBadge}>
-                  <Text style={styles.verifiedText}>Verified</Text>
+            {/* Email - only for email users */}
+            {authMethod === 'email' && (
+              <View style={styles.inputGroup}>
+                <View style={styles.labelRow}>
+                  <Text style={styles.label}>Email Address</Text>
+                  <View style={styles.verifiedBadge}>
+                    <Text style={styles.verifiedText}>✓ Verified</Text>
+                  </View>
                 </View>
+                <TextInput
+                  style={[styles.input, styles.disabledInput]}
+                  value={email}
+                  placeholder="Email address"
+                  placeholderTextColor="#94A3B8"
+                  editable={false}
+                />
               </View>
-              <TextInput
-                style={[styles.input, styles.disabledInput]}
-                value={email}
-                placeholder="Email address"
-                placeholderTextColor="#94A3B8"
-                editable={false}
-              />
-            </View>
+            )}
+
+            {/* Phone - only for phone users */}
+            {authMethod === 'phone' && (
+              <View style={styles.inputGroup}>
+                <View style={styles.labelRow}>
+                  <Text style={styles.label}>Phone Number</Text>
+                  <View style={styles.verifiedBadge}>
+                    <Text style={styles.verifiedText}>✓ Verified</Text>
+                  </View>
+                </View>
+                <TextInput
+                  style={[styles.input, styles.disabledInput]}
+                  value={phoneNumber}
+                  placeholder="+63 XXX XXX XXXX"
+                  placeholderTextColor="#94A3B8"
+                  editable={false}
+                />
+              </View>
+            )}
 
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Address</Text>
@@ -325,6 +386,11 @@ const EditProfileScreen = ({ navigation }: any) => {
                 keyboardType="phone-pad"
                 editable={!loading}
               />
+              {authMethod === 'phone' && (
+                <Text style={styles.fieldHint}>
+                  You can use the same number or add an alternative contact
+                </Text>
+              )}
             </View>
           </View>
 
@@ -396,9 +462,40 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1E293B',
   },
+  authBadgeContainer: {
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  authBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 8,
+  },
+  authBadgeEmail: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  authBadgePhone: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  authBadgeIcon: {
+    fontSize: 16,
+  },
+  authBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#334155',
+  },
   avatarSection: {
     alignItems: 'center',
-    marginVertical: 32,
+    marginVertical: 24,
   },
   imageContainer: {
     position: 'relative',
@@ -485,6 +582,12 @@ const styles = StyleSheet.create({
     minHeight: 100,
     textAlignVertical: 'top',
     paddingTop: 16,
+  },
+  fieldHint: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   saveButton: {
     marginHorizontal: 32,

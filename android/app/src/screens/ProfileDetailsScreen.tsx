@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -31,35 +31,57 @@ type Props = {
 const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
   const { userId } = route.params;
   const authInstance = getAuth();
+  const currentUser = authInstance.currentUser;
+  
+  // Determine auth method
+  const userEmail = currentUser?.email;
+  const userPhone = currentUser?.phoneNumber;
+  const authMethod = userEmail ? 'email' : 'phone';
+  
+  // States
   const [name, setName] = useState('');
-  const [email, setEmail] = useState(authInstance.currentUser?.email || '');
+  const [email, setEmail] = useState(userEmail || '');
+  const [phoneNumber, setPhoneNumber] = useState(userPhone || '');
   const [address, setAddress] = useState('');
   const [contactNo, setContactNo] = useState('');
   const [profileImage, setProfileImage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
 
+  useEffect(() => {
+    // Pre-fill contact number if user signed up with phone
+    if (authMethod === 'phone' && userPhone) {
+      setContactNo(userPhone);
+    }
+  }, [authMethod, userPhone]);
+
   const validateInputs = () => {
     if (!name.trim()) {
       Alert.alert('Required Field', 'Please enter your full name');
       return false;
     }
-    if (!email.trim()) {
+    
+    // Email is required for email users, optional for phone users
+    if (authMethod === 'email' && !email.trim()) {
       Alert.alert('Required Field', 'Please enter your email');
       return false;
     }
+    
     if (!address.trim()) {
       Alert.alert('Required Field', 'Please enter your address');
       return false;
     }
+    
     if (!contactNo.trim()) {
       Alert.alert('Required Field', 'Please enter your contact number');
       return false;
     }
+    
     if (contactNo.length < 10) {
       Alert.alert('Invalid Input', 'Please enter a valid contact number (at least 10 digits)');
       return false;
     }
+    
     return true;
   };
 
@@ -139,14 +161,23 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
         setUploadingImage(false);
       }
 
-      // Update user profile
-      const updateResult = await authService.updateUserProfile(userId, {
+      // Update user profile with appropriate data based on auth method
+      const profileData: any = {
         displayName: name,
-        email,
         address,
-        phoneNumber: contactNo,
+        contactNumber: contactNo,
         photoURL: profileImageUrl,
-      });
+        authMethod,
+      };
+
+      // Add email or phone based on auth method
+      if (authMethod === 'email') {
+        profileData.email = email;
+      } else {
+        profileData.phoneNumber = phoneNumber;
+      }
+
+      const updateResult = await authService.updateUserProfile(userId, profileData);
 
       if (updateResult.success) {
         Alert.alert('Success', 'Profile completed! Welcome to Disastour', [
@@ -209,6 +240,21 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
             </View>
 
             <View style={styles.form}>
+              {/* Auth Method Badge */}
+              <View style={styles.authBadgeContainer}>
+                <View style={[
+                  styles.authBadge,
+                  authMethod === 'email' ? styles.authBadgeEmail : styles.authBadgePhone
+                ]}>
+                  <Text style={styles.authBadgeIcon}>
+                    {authMethod === 'email' ? '📧' : '📱'}
+                  </Text>
+                  <Text style={styles.authBadgeText}>
+                    Signed up with {authMethod === 'email' ? 'Email' : 'Phone'}
+                  </Text>
+                </View>
+              </View>
+
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Full Name *</Text>
                 <TextInput
@@ -221,29 +267,52 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
                 />
               </View>
 
-              <View style={styles.inputGroup}>
-                <View style={styles.labelRow}>
-                  <Text style={styles.label}>Email Address *</Text>
-                  <View style={styles.verifiedBadge}>
-                    <Text style={styles.verifiedText}>Verified</Text>
+              {/* Email Field - Only for email users */}
+              {authMethod === 'email' && (
+                <View style={styles.inputGroup}>
+                  <View style={styles.labelRow}>
+                    <Text style={styles.label}>Email Address *</Text>
+                    <View style={styles.verifiedBadge}>
+                      <Text style={styles.verifiedText}>✓ Verified</Text>
+                    </View>
                   </View>
+                  <TextInput
+                    style={[styles.input, styles.disabledInput]}
+                    placeholder="your@email.com"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    value={email}
+                    editable={false}
+                  />
                 </View>
-                <TextInput
-                  style={[styles.input, styles.disabledInput]}
-                  placeholder="your@email.com"
-                  placeholderTextColor="#94A3B8"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  value={email}
-                  editable={false}
-                />
-              </View>
+              )}
+
+              {/* Phone Field - Only for phone users */}
+              {authMethod === 'phone' && (
+                <View style={styles.inputGroup}>
+                  <View style={styles.labelRow}>
+                    <Text style={styles.label}>Phone Number *</Text>
+                    <View style={styles.verifiedBadge}>
+                      <Text style={styles.verifiedText}>✓ Verified</Text>
+                    </View>
+                  </View>
+                  <TextInput
+                    style={[styles.input, styles.disabledInput]}
+                    placeholder="+63 XXX XXX XXXX"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="phone-pad"
+                    value={phoneNumber}
+                    editable={false}
+                  />
+                </View>
+              )}
 
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Address *</Text>
                 <TextInput
                   style={[styles.input, styles.textarea]}
-                  placeholder="123 Main St, City, State, Country"
+                  placeholder="123 Main St, City, Province"
                   placeholderTextColor="#94A3B8"
                   value={address}
                   onChangeText={setAddress}
@@ -264,6 +333,11 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
                   onChangeText={setContactNo}
                   editable={!loading}
                 />
+                {authMethod === 'phone' && (
+                  <Text style={styles.fieldHint}>
+                    You can use the same number or add an alternative contact
+                  </Text>
+                )}
               </View>
 
               <View style={styles.requiredNote}>
@@ -289,6 +363,7 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
             </View>
 
             <View style={styles.infoCard}>
+              <Text style={styles.infoIcon}>🔒</Text>
               <Text style={styles.infoText}>
                 Your information is secure and will only be used for emergency alerts and location-based notifications.
               </Text>
@@ -317,7 +392,7 @@ const styles = StyleSheet.create({
   },
   header: {
     alignItems: 'center',
-    marginBottom: 48,
+    marginBottom: 40,
   },
   imageContainer: {
     position: 'relative',
@@ -391,6 +466,36 @@ const styles = StyleSheet.create({
     gap: 24,
     marginBottom: 24,
   },
+  authBadgeContainer: {
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  authBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    gap: 8,
+  },
+  authBadgeEmail: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  authBadgePhone: {
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  authBadgeIcon: {
+    fontSize: 16,
+  },
+  authBadgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
   inputGroup: {
     gap: 8,
   },
@@ -433,6 +538,12 @@ const styles = StyleSheet.create({
     minHeight: 100,
     textAlignVertical: 'top',
     paddingTop: 16,
+  },
+  fieldHint: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   requiredNote: {
     backgroundColor: '#FEF3C7',
@@ -479,17 +590,23 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   infoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#F8FAFC',
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    gap: 12,
+  },
+  infoIcon: {
+    fontSize: 20,
   },
   infoText: {
+    flex: 1,
     fontSize: 13,
     color: '#64748B',
     lineHeight: 20,
-    textAlign: 'center',
   },
 });
 

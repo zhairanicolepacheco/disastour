@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { getAuth } from '@react-native-firebase/auth';
+import PhoneInput from 'react-native-phone-number-input';
 import { RootStackParamList } from '../navigation/RootNavigator';
 import { authService } from '../services/authService';
 import { colors } from '../config/colors';
@@ -24,22 +25,35 @@ type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'SignUp'>;
 };
 
+type AuthMethod = 'email' | 'phone';
+
 const SignUpScreen: React.FC<Props> = ({ navigation }) => {
+  // Tab state
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('email');
+
+  // Email states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  
+  // Phone states
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [formattedPhone, setFormattedPhone] = useState('');
+  const [phoneValid, setPhoneValid] = useState(false);
+  
+  // Common states
   const [loading, setLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [checkingNow, setCheckingNow] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Aggressive polling for email verification
+  // Email verification polling
   useEffect(() => {
     if (!emailSent) return;
 
     let intervalId: ReturnType<typeof setInterval>;
     let attempts = 0;
-    const maxAttempts = 120; // 6 minutes
+    const maxAttempts = 120;
 
     const checkVerification = async () => {
       try {
@@ -51,10 +65,8 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
         if (result.verified) {
           console.log('✅ EMAIL VERIFIED!');
           
-          // Stop polling
           if (intervalId) clearInterval(intervalId);
           
-          // Force sign out and back in to refresh auth state
           const authInstance = getAuth();
           const currentUser = authInstance.currentUser;
           
@@ -65,23 +77,15 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
               [{ text: 'OK' }]
             );
 
-            // Small delay to let the user see the alert
             setTimeout(async () => {
               try {
-                // Sign out
                 await authService.signOut();
-                
-                // Sign back in to trigger navigation with fresh emailVerified status
                 const signInResult = await authService.signIn(
                   currentUser.email || email,
                   password
                 );
                 
-                if (signInResult.success) {
-                  console.log('✅ Signed back in successfully');
-                  // Navigation will happen automatically via RootNavigator
-                } else {
-                  // If sign-in fails, just let the user know to sign in manually
+                if (!signInResult.success) {
                   Alert.alert(
                     'Success!',
                     'Your email is verified! Please sign in to continue.',
@@ -117,10 +121,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
       }
     };
 
-    // Initial check after 2 seconds
     setTimeout(checkVerification, 2000);
-
-    // Then check every 3 seconds
     intervalId = setInterval(checkVerification, 3000);
 
     return () => {
@@ -128,7 +129,8 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
     };
   }, [emailSent, email, password, navigation]);
 
-  const validateInputs = () => {
+  // Email validation
+  const validateEmailInputs = () => {
     if (!email.trim()) {
       Alert.alert('Error', 'Please enter your email');
       return false;
@@ -148,8 +150,26 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
     return true;
   };
 
-  const handleSignUp = async () => {
-    if (!validateInputs()) return;
+  // Phone validation
+  const validatePhoneInputs = () => {
+    if (!formattedPhone.trim()) {
+      Alert.alert('Error', 'Please enter your phone number');
+      return false;
+    }
+    if (!formattedPhone.startsWith('+63')) {
+      Alert.alert('Error', 'Please enter a valid Philippine phone number');
+      return false;
+    }
+    if (formattedPhone.length < 13) {
+      Alert.alert('Error', 'Please enter a complete phone number');
+      return false;
+    }
+    return true;
+  };
+
+  // Email signup
+  const handleEmailSignUp = async () => {
+    if (!validateEmailInputs()) return;
 
     setLoading(true);
     const result = await authService.signUp(email, password);
@@ -167,6 +187,29 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
     setLoading(false);
   };
 
+  // Phone signup - send code and navigate to verification screen
+  const handlePhoneSendCode = async () => {
+    if (!validatePhoneInputs()) return;
+
+    setLoading(true);
+    console.log('📱 Sending code to:', formattedPhone);
+    
+    const result = await authService.signUpWithPhone(formattedPhone);
+
+    if (result && result.success) {
+      setLoading(false);
+      navigation.navigate('PhoneVerification', {
+        phoneNumber: formattedPhone,
+        confirmation: result.confirmation,
+        isSignUp: true,
+      });
+    } else {
+      setLoading(false);
+      Alert.alert('Error', result?.error || 'Failed to send verification code');
+    }
+  };
+
+  // Resend email
   const handleResendEmail = async () => {
     setLoading(true);
     const result = await authService.resendVerificationEmail();
@@ -178,6 +221,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
     setLoading(false);
   };
 
+  // Manual check email
   const handleManualCheck = async () => {
     setCheckingNow(true);
     try {
@@ -193,7 +237,6 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
           [{ text: 'OK' }]
         );
 
-        // Sign out and back in to refresh state
         setTimeout(async () => {
           try {
             await authService.signOut();
@@ -215,7 +258,6 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
               );
             }
           } catch (error) {
-            console.error('Error during manual check sign-in:', error);
             Alert.alert(
               'Success!',
               'Your email is verified! Please sign in to continue.',
@@ -231,7 +273,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
       } else {
         Alert.alert(
           'Not Verified Yet',
-          'Your email is not verified yet. Please:\n\n1. Check your email inbox (and spam folder)\n2. Click the verification link\n3. Wait a moment and try again',
+          'Your email is not verified yet. Please check your inbox and spam folder.',
           [{ text: 'OK' }]
         );
       }
@@ -248,6 +290,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
     setRefreshing(false);
   };
 
+  // Render email verification screen
   if (emailSent) {
     const authInstance = getAuth();
     const currentUser = authInstance.currentUser;
@@ -263,8 +306,6 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
               onRefresh={onRefresh}
               colors={['#3B82F6']}
               tintColor="#3B82F6"
-              title="Pull to check verification"
-              titleColor="#64748B"
             />
           }
         >
@@ -298,7 +339,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
 
               <View style={styles.instructionCard}>
                 <Text style={styles.instructionText}>
-                  Click the link in your email to verify your account. Once verified, you'll automatically be signed in and redirected.
+                  Click the link in your email to verify your account. Once verified, you'll automatically be signed in.
                 </Text>
               </View>
 
@@ -308,13 +349,6 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                 <Step number="3" text="Wait for automatic sign-in" />
               </View>
 
-              {/* <View style={styles.refreshHint}>
-                <Text style={styles.refreshHintIcon}>👇</Text>
-                <Text style={styles.refreshHintText}>
-                  Pull down to refresh verification status
-                </Text>
-              </View> */}
-
               <TouchableOpacity
                 style={styles.checkButton}
                 onPress={handleManualCheck}
@@ -323,10 +357,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                 {checkingNow ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <>
-                    {/* <Text style={styles.checkButtonIcon}></Text> */}
-                    <Text style={styles.checkButtonText}>Check Verification Status</Text>
-                  </>
+                  <Text style={styles.checkButtonText}>Check Verification Status</Text>
                 )}
               </TouchableOpacity>
 
@@ -345,19 +376,12 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
                 )}
               </TouchableOpacity>
 
-              {/* <View style={styles.autoCheckNotice}>
-                <ActivityIndicator size="small" color="#92400E" style={{ marginRight: 8 }} />
-                <Text style={styles.autoCheckText}>
-                  Checking verification status automatically...
-                </Text>
-              </View> */}
-
               <View style={styles.helpCard}>
                 <Text style={styles.helpTitle}>💡 Didn't receive the email?</Text>
                 <Text style={styles.helpText}>
                   • Check your spam/junk folder{'\n'}
                   • Make sure the email address is correct{'\n'}
-                  • Click "Resend" to get a new verification email{'\n'}
+                  • Click "Resend" to get a new email{'\n'}
                   • Wait a few minutes and check again
                 </Text>
               </View>
@@ -368,6 +392,7 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
     );
   }
 
+  // Main signup screen with tabs
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />      
@@ -385,59 +410,138 @@ const SignUpScreen: React.FC<Props> = ({ navigation }) => {
               <Text style={styles.subtitle}>Get started with Disastour</Text>
             </View>
 
-            <View style={styles.form}>
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Email</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="your@email.com"
-                  placeholderTextColor="#94A3B8"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  value={email}
-                  onChangeText={setEmail}
-                  editable={!loading}
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="At least 6 characters"
-                  placeholderTextColor="#94A3B8"
-                  secureTextEntry
-                  value={password}
-                  onChangeText={setPassword}
-                  editable={!loading}
-                />
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Confirm Password</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Re-enter your password"
-                  placeholderTextColor="#94A3B8"
-                  secureTextEntry
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  editable={!loading}
-                />
-              </View>
+            {/* Auth Method Tabs */}
+            <View style={styles.tabContainer}>
+              <TouchableOpacity
+                style={[styles.tab, authMethod === 'email' && styles.tabActive]}
+                onPress={() => setAuthMethod('email')}
+              >
+                <Text style={styles.tabIcon}>📧</Text>
+                <Text style={[styles.tabText, authMethod === 'email' && styles.tabTextActive]}>
+                  Email
+                </Text>
+              </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.signUpButton, loading && styles.buttonDisabled]}
-                onPress={handleSignUp}
-                disabled={loading}
+                style={[styles.tab, authMethod === 'phone' && styles.tabActive]}
+                onPress={() => setAuthMethod('phone')}
               >
-                {loading ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.signUpButtonText}>Create Account</Text>
-                )}
+                <Text style={styles.tabIcon}>📱</Text>
+                <Text style={[styles.tabText, authMethod === 'phone' && styles.tabTextActive]}>
+                  Phone
+                </Text>
               </TouchableOpacity>
             </View>
+
+            {/* Email Form */}
+            {authMethod === 'email' && (
+              <View style={styles.form}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Email</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="your@email.com"
+                    placeholderTextColor="#94A3B8"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    value={email}
+                    onChangeText={setEmail}
+                    editable={!loading}
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Password</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="At least 6 characters"
+                    placeholderTextColor="#94A3B8"
+                    secureTextEntry
+                    value={password}
+                    onChangeText={setPassword}
+                    editable={!loading}
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Confirm Password</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Re-enter your password"
+                    placeholderTextColor="#94A3B8"
+                    secureTextEntry
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    editable={!loading}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.signUpButton, loading && styles.buttonDisabled]}
+                  onPress={handleEmailSignUp}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.signUpButtonText}>Create Account with Email</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Phone Form */}
+            {authMethod === 'phone' && (
+              <View style={styles.form}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Phone Number</Text>
+                  <View style={styles.phoneInputContainer}>
+                    <PhoneInput
+                      value={phoneNumber}
+                      onChangeText={setPhoneNumber}
+                      onChangeFormattedText={(text) => {
+                        setFormattedPhone(text);
+                        setPhoneValid(text.length >= 13);
+                      }}
+                      defaultCode="PH"
+                      layout="first"
+                      containerStyle={styles.phoneContainer}
+                      textContainerStyle={styles.phoneTextContainer}
+                      textInputStyle={styles.phoneTextInput}
+                      codeTextStyle={styles.phoneCodeText}
+                      flagButtonStyle={styles.phoneFlagButton}
+                      countryPickerButtonStyle={styles.phoneCountryPicker}
+                      placeholder="912 345 6789"
+                    />
+                  </View>
+                  <Text style={styles.phoneHint}>
+                    Format: +63 XXX XXX XXXX
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.signUpButton, 
+                    (loading || !phoneValid) && styles.buttonDisabled
+                  ]}
+                  onPress={handlePhoneSendCode}
+                  disabled={loading || !phoneValid}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.signUpButtonText}>Send Verification Code</Text>
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.phoneInfoCard}>
+                  <Text style={styles.phoneInfoIcon}>💡</Text>
+                  <Text style={styles.phoneInfoText}>
+                    We'll send a 6-digit verification code to your phone number via SMS.
+                  </Text>
+                </View>
+              </View>
+            )}
 
             <View style={styles.footer}>
               <Text style={styles.footerText}>Already have an account?</Text>
@@ -481,6 +585,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 20,
     left: 32,
+    zIndex: 10,
   },
   backButtonText: {
     fontSize: 16,
@@ -488,7 +593,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   header: {
-    marginBottom: 48,
+    marginBottom: 32,
   },
   title: {
     fontSize: 36,
@@ -501,6 +606,42 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#64748B',
     fontWeight: '400',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 32,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 10,
+    gap: 8,
+  },
+  tabActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  tabIcon: {
+    fontSize: 18,
+  },
+  tabText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  tabTextActive: {
+    color: '#1E293B',
+    fontWeight: '700',
   },
   form: {
     gap: 24,
@@ -523,6 +664,59 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     fontSize: 16,
     color: '#1E293B',
+  },
+  phoneInputContainer: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    overflow: 'hidden',
+  },
+  phoneContainer: {
+    width: '100%',
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+  },
+  phoneTextContainer: {
+    backgroundColor: 'transparent',
+    paddingVertical: 0,
+  },
+  phoneTextInput: {
+    fontSize: 16,
+    color: '#1E293B',
+    paddingVertical: 16,
+  },
+  phoneCodeText: {
+    fontSize: 16,
+    color: '#1E293B',
+  },
+  phoneFlagButton: {
+    paddingLeft: 12,
+  },
+  phoneCountryPicker: {
+    paddingRight: 8,
+  },
+  phoneHint: {
+    fontSize: 13,
+    color: '#64748B',
+    marginTop: 4,
+  },
+  phoneInfoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 12,
+    padding: 16,
+    gap: 12,
+  },
+  phoneInfoIcon: {
+    fontSize: 20,
+  },
+  phoneInfoText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#1E40AF',
+    lineHeight: 18,
   },
   signUpButton: {
     backgroundColor: '#3B82F6',
@@ -559,7 +753,7 @@ const styles = StyleSheet.create({
     color: '#3B82F6',
     fontWeight: '700',
   },
-  // Verification screen styles
+  // Email verification screen
   verificationSection: {
     alignItems: 'center',
     paddingTop: 40,
@@ -656,24 +850,6 @@ const styles = StyleSheet.create({
     color: '#334155',
     fontWeight: '500',
   },
-  refreshHint: {
-    backgroundColor: '#DBEAFE',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    marginBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  refreshHintIcon: {
-    fontSize: 16,
-  },
-  refreshHintText: {
-    fontSize: 13,
-    color: '#1E40AF',
-    fontWeight: '600',
-  },
   checkButton: {
     backgroundColor: '#10B981',
     paddingVertical: 18,
@@ -686,12 +862,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 4,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  checkButtonIcon: {
-    fontSize: 18,
   },
   checkButtonText: {
     color: '#FFFFFF',
@@ -718,20 +888,6 @@ const styles = StyleSheet.create({
     color: '#3B82F6',
     fontSize: 16,
     fontWeight: '700',
-  },
-  autoCheckNotice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: '#FEF3C7',
-    borderRadius: 8,
-    marginBottom: 20,
-  },
-  autoCheckText: {
-    fontSize: 13,
-    color: '#92400E',
-    fontWeight: '500',
   },
   helpCard: {
     backgroundColor: '#F1F5F9',

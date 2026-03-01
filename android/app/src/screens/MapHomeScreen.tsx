@@ -16,7 +16,10 @@ import MapClusteringView from 'react-native-map-clustering';
 import Geolocation from '@react-native-community/geolocation';
 import { getAuth } from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
 import { colors } from '../config/colors';
+import { offlineStorage } from '../services/offlineStorage';
 
 // Import modals
 import AddContactModal from '../components/modals/AddContactModal';
@@ -41,16 +44,20 @@ interface RiskArea {
   name: string;
   latitude: number;
   longitude: number;
-  radius: number; // in meters
+  radius: number;
   riskLevel: 'high' | 'medium' | 'low';
+  disasterType: 'flood' | 'earthquake' | 'fire';
+  temperature?: number;
+  humidity?: number;
+  lastUpdated?: string;
 }
 
-// Barangay Lalaan 2, Silang, Cavite coordinates
-const BARANGAY_LALAAN_2 = {
-  latitude: 14.159473704166015,
-  longitude: 120.95818961493147,
-  latitudeDelta: 0.01,
-  longitudeDelta: 0.01,
+// Silang, Cavite Center (covers whole municipality)
+const SILANG_CAVITE = {
+  latitude: 14.2167,
+  longitude: 120.9833,
+  latitudeDelta: 0.15,
+  longitudeDelta: 0.15,
 };
 
 const MapHomeScreen = ({ navigation }: any) => {
@@ -71,22 +78,54 @@ const MapHomeScreen = ({ navigation }: any) => {
   const [routeCoordinates, setRouteCoordinates] = useState<Array<{ latitude: number; longitude: number }>>([]);
   const [showingRoute, setShowingRoute] = useState(false);
   const [locationUsers, setLocationUsers] = useState<LocationUser[]>([]);
+  
+  // Offline mode state
+  const [isOnline, setIsOnline] = useState(true);
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [showOfflineNotice, setShowOfflineNotice] = useState(false);
 
   useEffect(() => {
     requestLocationPermission();
     
-    // Update location every 30 seconds
+    // Update location every 30 seconds (only when online)
     const locationInterval = setInterval(() => {
-      getCurrentLocation();
-    }, 30000); // 30 seconds
+      if (isOnline) {
+        getCurrentLocation();
+      }
+    }, 30000);
 
     return () => {
       clearInterval(locationInterval);
     };
+  }, [isOnline]);
+
+  useEffect(() => {
+    // Network status listener
+    const unsubscribe = NetInfo.addEventListener(state => {
+      const online = (state.isConnected && state.isInternetReachable) ?? false;
+      setIsOnline(online);
+      
+      if (!online) {
+        setShowOfflineNotice(true);
+        loadCachedData();
+      } else {
+        setShowOfflineNotice(false);
+      }
+    });
+
+    // Load last sync time
+    loadLastSyncTime();
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!user?.uid || !isOnline) {
+      if (!isOnline) {
+        loadCachedData();
+      }
+      return;
+    }
 
     const unsubscribers: (() => void)[] = [];
 
@@ -101,7 +140,6 @@ const MapHomeScreen = ({ navigation }: any) => {
             const familyData = doc.data();
             const familyUserId = doc.id;
 
-            // Listen to family member's location
             const locationUnsubscribe = firestore()
               .collection('user_locations')
               .doc(familyUserId)
@@ -127,7 +165,6 @@ const MapHomeScreen = ({ navigation }: any) => {
                       });
                     }
                   } else {
-                    // Remove if no location data
                     setLocationUsers((prev) => prev.filter((u) => u.id !== familyUserId));
                   }
                 },
@@ -157,7 +194,6 @@ const MapHomeScreen = ({ navigation }: any) => {
             const friendData = doc.data();
             const friendUserId = doc.id;
 
-            // Listen to friend's location
             const locationUnsubscribe = firestore()
               .collection('user_locations')
               .doc(friendUserId)
@@ -183,7 +219,6 @@ const MapHomeScreen = ({ navigation }: any) => {
                       });
                     }
                   } else {
-                    // Remove if no location data
                     setLocationUsers((prev) => prev.filter((u) => u.id !== friendUserId));
                   }
                 },
@@ -202,11 +237,105 @@ const MapHomeScreen = ({ navigation }: any) => {
 
     unsubscribers.push(friendsUnsubscribe);
 
-    // Cleanup
+    // Periodically cache data while online
+    const cacheInterval = setInterval(() => {
+      cacheCurrentData();
+    }, 60000);
+
     return () => {
       unsubscribers.forEach((unsubscribe) => unsubscribe());
+      clearInterval(cacheInterval);
+      cacheCurrentData();
     };
-  }, [user?.uid]);
+  }, [user?.uid, isOnline]);
+
+  const loadCachedData = async () => {
+    try {
+      const cachedLocations = await offlineStorage.getCachedLocations();
+      if (cachedLocations.length > 0) {
+        // Transform CachedLocation to LocationUser format
+        const users = cachedLocations.map(cached => ({
+          id: cached.id,
+          name: cached.name,
+          location: cached.location,
+          type: cached.type,
+          latitude: cached.latitude,
+          longitude: cached.longitude,
+          avatar: cached.avatar,
+        }));
+        setLocationUsers(users);
+        console.log('✅ Loaded', users.length, 'cached locations');
+      }
+    } catch (error) {
+      console.error('Error loading cached data:', error);
+    }
+  };
+
+  const loadLastSyncTime = async () => {
+    try {
+      const timestamp = await offlineStorage.getLastSyncTime();
+      if (timestamp) {
+        setLastSyncTime(new Date(timestamp));
+      }
+    } catch (error) {
+      console.error('Error loading last sync time:', error);
+    }
+  };
+
+  const cacheCurrentData = async () => {
+    try {
+      if (locationUsers.length > 0) {
+        // Transform LocationUser to CachedLocation format
+        const cachedLocations = locationUsers.map(user => ({
+          id: user.id,
+          userId: user.id,
+          name: user.name,
+          location: user.location,
+          type: user.type,
+          latitude: user.latitude,
+          longitude: user.longitude,
+          avatar: user.avatar,
+          lastUpdated: Date.now(),
+        }));
+        await offlineStorage.cacheUserLocations(cachedLocations);
+      }
+    } catch (error) {
+      console.error('Error caching data:', error);
+    }
+  };
+
+  const formatLastSync = (date: Date) => {
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return date.toLocaleDateString();
+  };
+
+  const OfflineBanner = () => (
+    <View style={styles.offlineBanner}>
+      <View style={styles.offlineBannerContent}>
+        <Text style={styles.offlineIcon}>📡</Text>
+        <View style={styles.offlineTextContainer}>
+          <Text style={styles.offlineTitle}>Offline Mode</Text>
+          <Text style={styles.offlineSubtitle}>
+            Showing last known locations
+            {lastSyncTime && ` • Last updated ${formatLastSync(lastSyncTime)}`}
+          </Text>
+        </View>
+      </View>
+      <TouchableOpacity 
+        style={styles.offlineButton}
+        onPress={() => setShowOfflineNotice(false)}
+      >
+        <Text style={styles.offlineButtonText}>✕</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   const requestLocationPermission = async () => {
     if (Platform.OS === 'android') {
@@ -233,6 +362,8 @@ const MapHomeScreen = ({ navigation }: any) => {
   };
 
   const getCurrentLocation = () => {
+    if (!isOnline) return;
+
     Geolocation.getCurrentPosition(
       (position) => {
         const newLocation = {
@@ -242,7 +373,6 @@ const MapHomeScreen = ({ navigation }: any) => {
         setUserLocation(newLocation);
         console.log('Location fetched:', newLocation);
         
-        // Save location to Firebase for friends/family to see
         if (user?.uid) {
           firestore()
             .collection('user_locations')
@@ -250,7 +380,7 @@ const MapHomeScreen = ({ navigation }: any) => {
             .set({
               latitude: newLocation.latitude,
               longitude: newLocation.longitude,
-              address: 'Barangay Lalaan 2', // You can use reverse geocoding here
+              address: 'Silang, Cavite',
               updatedAt: firestore.FieldValue.serverTimestamp(),
             })
             .catch((error) => {
@@ -260,7 +390,6 @@ const MapHomeScreen = ({ navigation }: any) => {
       },
       (error) => {
         console.log('Location error:', error);
-        // Try again with less strict settings
         Geolocation.getCurrentPosition(
           (position) => {
             const newLocation = {
@@ -270,7 +399,6 @@ const MapHomeScreen = ({ navigation }: any) => {
             setUserLocation(newLocation);
             console.log('Location fetched (retry):', newLocation);
             
-            // Save location to Firebase
             if (user?.uid) {
               firestore()
                 .collection('user_locations')
@@ -278,7 +406,7 @@ const MapHomeScreen = ({ navigation }: any) => {
                 .set({
                   latitude: newLocation.latitude,
                   longitude: newLocation.longitude,
-                  address: 'Barangay Lalaan 2',
+                  address: 'Silang, Cavite',
                   updatedAt: firestore.FieldValue.serverTimestamp(),
                 })
                 .catch((error) => {
@@ -298,22 +426,27 @@ const MapHomeScreen = ({ navigation }: any) => {
 
   const recenterMap = () => {
     if (showingRoute) {
-      // Clear route immediately
       setShowingRoute(false);
       setRouteCoordinates([]);
-      // Then recenter the map
       setTimeout(() => {
-        mapRef.current?.animateToRegion(BARANGAY_LALAAN_2, 1000);
+        mapRef.current?.animateToRegion(SILANG_CAVITE, 1000);
       }, 50);
     } else {
-      mapRef.current?.animateToRegion(BARANGAY_LALAAN_2, 1000);
+      mapRef.current?.animateToRegion(SILANG_CAVITE, 1000);
     }
   };
 
   const getDirections = async (destinationLat: number, destinationLng: number) => {
-    // If user location is not available, try to get it first
+    if (!isOnline) {
+      Alert.alert(
+        'Offline Mode',
+        'Turn-by-turn directions require internet connection. You can still view the location on the map.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     if (!userLocation) {
-      // Try to get location immediately
       Geolocation.getCurrentPosition(
         (position) => {
           const newLocation = {
@@ -321,7 +454,6 @@ const MapHomeScreen = ({ navigation }: any) => {
             longitude: position.coords.longitude,
           };
           setUserLocation(newLocation);
-          // Retry getting directions with new location
           fetchRoute(newLocation, destinationLat, destinationLng);
         },
         (error) => {
@@ -346,8 +478,7 @@ const MapHomeScreen = ({ navigation }: any) => {
     destinationLng: number
   ) => {
     try {
-      // Using Google Directions API with more accurate options
-      const apiKey = 'AIzaSyCv0rkk-slYFrm2obp30OUUurIanvZC--c'; // Replace with your API key
+      const apiKey = 'AIzaSyCv0rkk-slYFrm2obp30OUUurIanvZC--c';
       const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destinationLat},${destinationLng}&mode=driving&alternatives=false&key=${apiKey}`;
       
       const response = await fetch(url);
@@ -358,7 +489,6 @@ const MapHomeScreen = ({ navigation }: any) => {
         setRouteCoordinates(points);
         setShowingRoute(true);
         
-        // Fit map to show entire route with padding
         setTimeout(() => {
           mapRef.current?.fitToCoordinates(points, {
             edgePadding: { top: 120, right: 80, bottom: 200, left: 80 },
@@ -368,7 +498,6 @@ const MapHomeScreen = ({ navigation }: any) => {
       } else {
         console.error('Directions API error:', data.status, data.error_message);
         
-        // Fallback: show straight line from USER LOCATION
         const fallbackPoints = [
           { latitude: origin.latitude, longitude: origin.longitude },
           { latitude: destinationLat, longitude: destinationLng },
@@ -386,7 +515,6 @@ const MapHomeScreen = ({ navigation }: any) => {
     } catch (error) {
       console.error('Error fetching directions:', error);
       
-      // Fallback: show straight line from USER LOCATION
       const fallbackPoints = [
         { latitude: origin.latitude, longitude: origin.longitude },
         { latitude: destinationLat, longitude: destinationLng },
@@ -403,7 +531,6 @@ const MapHomeScreen = ({ navigation }: any) => {
     }
   };
 
-  // Decode Google's encoded polyline
   const decodePolyline = (encoded: string) => {
     const points = [];
     let index = 0;
@@ -446,11 +573,18 @@ const MapHomeScreen = ({ navigation }: any) => {
   };
 
   const refreshLocation = () => {
+    if (!isOnline) {
+      Alert.alert(
+        'Offline Mode',
+        'You are currently offline. Real-time location updates are not available. Showing last known locations from cache.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
     getCurrentLocation();
     Alert.alert('Refreshing Location', 'Getting your current location...');
   };
 
-  // Modal handlers
   const handleAddFamily = () => {
     setShowAddModal(false);
     setTimeout(() => setShowAddFamilyModal(true), 300);
@@ -465,46 +599,174 @@ const MapHomeScreen = ({ navigation }: any) => {
     console.log('Family member added:', data);
     Alert.alert('Success', `${data.nickname} has been added to your family contacts`);
     setShowAddFamilyModal(false);
-    // TODO: Add to database/state
   };
 
   const handleFriendSubmit = (data: FriendData) => {
     console.log('Friend added:', data);
     Alert.alert('Success', `Request sent to ${data.nickname}`);
     setShowAddFriendModal(false);
-    // TODO: Add to database/state
   };
 
-  // Local Risk Areas
+  // Risk Areas - Flood, Earthquake, Fire
   const riskAreas: RiskArea[] = [
+    // FLOOD RISK AREAS
     {
-      id: 'risk1',
-      name: 'Brgy. Pooc I Covered Court',
+      id: 'flood1',
+      name: 'Barangay Biga I (Flood Zone)',
       latitude: 14.1580,
-      longitude: 120.9590,
-      radius: 300, // 300 meters
+      longitude: 120.9620,
+      radius: 400,
       riskLevel: 'high',
+      disasterType: 'flood',
+      lastUpdated: '2 hours ago',
     },
     {
-      id: 'risk2',
-      name: 'Barangay Kaong',
-      latitude: 14.1610,
-      longitude: 120.9575,
+      id: 'flood2',
+      name: 'Barangay Lumil (Flood Prone)',
+      latitude: 14.2150,
+      longitude: 120.9750,
+      radius: 450,
+      riskLevel: 'high',
+      disasterType: 'flood',
+      lastUpdated: '1 hour ago',
+    },
+    {
+      id: 'flood3',
+      name: 'Barangay Pooc I (Low-lying Area)',
+      latitude: 14.1620,
+      longitude: 120.9590,
       radius: 350,
       riskLevel: 'medium',
+      disasterType: 'flood',
+      lastUpdated: '3 hours ago',
     },
     {
-      id: 'risk3',
-      name: 'Barangay Biga 1',
-      latitude: 14.1565,
-      longitude: 120.9605,
-      radius: 280,
+      id: 'flood4',
+      name: 'Barangay Kaong (River Area)',
+      latitude: 14.1850,
+      longitude: 120.9680,
+      radius: 300,
+      riskLevel: 'medium',
+      disasterType: 'flood',
+      lastUpdated: '2 hours ago',
+    },
+    {
+      id: 'flood5',
+      name: 'Barangay Anahaw I (Creek Overflow)',
+      latitude: 14.2100,
+      longitude: 120.9900,
+      radius: 380,
       riskLevel: 'high',
+      disasterType: 'flood',
+      lastUpdated: '30 minutes ago',
+    },
+    // EARTHQUAKE RISK AREAS
+    {
+      id: 'quake1',
+      name: 'Barangay Biga II (Fault Line)',
+      latitude: 14.1650,
+      longitude: 120.9700,
+      radius: 500,
+      riskLevel: 'high',
+      disasterType: 'earthquake',
+      lastUpdated: 'Active',
+    },
+    {
+      id: 'quake2',
+      name: 'Barangay Narra I (Seismic Zone)',
+      latitude: 14.2400,
+      longitude: 121.0000,
+      radius: 600,
+      riskLevel: 'high',
+      disasterType: 'earthquake',
+      lastUpdated: 'Active',
+    },
+    {
+      id: 'quake3',
+      name: 'Barangay Biluso (Unstable Ground)',
+      latitude: 14.1800,
+      longitude: 120.9550,
+      radius: 450,
+      riskLevel: 'medium',
+      disasterType: 'earthquake',
+      lastUpdated: 'Monitored',
+    },
+    {
+      id: 'quake4',
+      name: 'Barangay Malabag (Near Fault)',
+      latitude: 14.2200,
+      longitude: 120.9650,
+      radius: 400,
+      riskLevel: 'medium',
+      disasterType: 'earthquake',
+      lastUpdated: 'Monitored',
+    },
+    // FIRE RISK AREAS
+    {
+      id: 'fire1',
+      name: 'Barangay Poblacion (Dense Housing)',
+      latitude: 14.2167,
+      longitude: 120.9833,
+      radius: 350,
+      riskLevel: 'high',
+      disasterType: 'fire',
+      temperature: 34,
+      humidity: 45,
+      lastUpdated: 'Real-time',
+    },
+    {
+      id: 'fire2',
+      name: 'Barangay Aga (Dry Vegetation)',
+      latitude: 14.2500,
+      longitude: 120.9900,
+      radius: 400,
+      riskLevel: 'high',
+      disasterType: 'fire',
+      temperature: 36,
+      humidity: 40,
+      lastUpdated: 'Real-time',
+    },
+    {
+      id: 'fire3',
+      name: 'Barangay Tibig (Forest Area)',
+      latitude: 14.1900,
+      longitude: 121.0100,
+      radius: 500,
+      riskLevel: 'medium',
+      disasterType: 'fire',
+      temperature: 32,
+      humidity: 55,
+      lastUpdated: 'Real-time',
+    },
+    {
+      id: 'fire4',
+      name: 'Barangay Maguyam (Grassland)',
+      latitude: 14.2300,
+      longitude: 120.9500,
+      radius: 380,
+      riskLevel: 'medium',
+      disasterType: 'fire',
+      temperature: 33,
+      humidity: 50,
+      lastUpdated: 'Real-time',
+    },
+    {
+      id: 'fire5',
+      name: 'Barangay Toledo (Industrial)',
+      latitude: 14.1750,
+      longitude: 120.9800,
+      radius: 320,
+      riskLevel: 'high',
+      disasterType: 'fire',
+      temperature: 35,
+      humidity: 42,
+      lastUpdated: 'Real-time',
     },
   ];
 
-  // Evacuation centers
+  // Evacuation Centers - 20 locations across Silang
   const evacuationCenters: EvacuationCenter[] = [
+    // LALAAN AREA
     {
       id: 'ec1',
       name: 'Rogationist College',
@@ -521,71 +783,161 @@ const MapHomeScreen = ({ navigation }: any) => {
     },
     {
       id: 'ec3',
-      name: 'Banaba Barangay Hall',
-      address: 'Banaba, Silang, Cavite',
-      latitude: 14.1621,
-      longitude: 120.9560,
-    },
-    {
-      id: 'ec4',
-      name: 'Biluso Barangay Hall',
-      address: 'Biluso, Silang, Cavite',
-      latitude: 14.1575,
-      longitude: 120.9545,
-    },
-    {
-      id: 'ec5',
       name: 'Lalaan 1st Covered Court',
       address: 'Lalaan I, Silang, Cavite',
       latitude: 14.1605,
       longitude: 120.9572,
     },
+    // POBLACION AREA (CENTER)
     {
-      id: 'ec6',
-      name: 'Lalaan Covered Court',
-      address: 'Center of Lalaan II, Silang, Cavite',
-      latitude: 14.1598,
-      longitude: 120.9583,
+      id: 'ec4',
+      name: 'Silang Municipal Hall',
+      address: 'Poblacion, Silang, Cavite',
+      latitude: 14.2167,
+      longitude: 120.9833,
     },
     {
+      id: 'ec5',
+      name: 'Silang Public Market Covered Court',
+      address: 'Near Public Market, Poblacion',
+      latitude: 14.2175,
+      longitude: 120.9840,
+    },
+    {
+      id: 'ec6',
+      name: 'St. Mary Magdalene Church',
+      address: 'Church Plaza, Poblacion',
+      latitude: 14.2160,
+      longitude: 120.9825,
+    },
+    // NORTHERN SILANG
+    {
       id: 'ec7',
-      name: 'Balubad Covered Court',
+      name: 'Barangay Anahaw I Covered Court',
+      address: 'Anahaw I, Silang, Cavite',
+      latitude: 14.2100,
+      longitude: 120.9900,
+    },
+    {
+      id: 'ec8',
+      name: 'Barangay Aga Barangay Hall',
+      address: 'Aga, Silang, Cavite',
+      latitude: 14.2500,
+      longitude: 120.9900,
+    },
+    {
+      id: 'ec9',
+      name: 'Barangay Narra I Multi-Purpose Hall',
+      address: 'Narra I, Silang, Cavite',
+      latitude: 14.2400,
+      longitude: 121.0000,
+    },
+    // EASTERN SILANG
+    {
+      id: 'ec10',
+      name: 'Barangay Tibig Covered Court',
+      address: 'Tibig, Silang, Cavite',
+      latitude: 14.1900,
+      longitude: 121.0100,
+    },
+    {
+      id: 'ec11',
+      name: 'Barangay Biga II Evacuation Center',
+      address: 'Biga II, Silang, Cavite',
+      latitude: 14.1650,
+      longitude: 120.9700,
+    },
+    // WESTERN SILANG
+    {
+      id: 'ec12',
+      name: 'Barangay Maguyam Barangay Hall',
+      address: 'Maguyam, Silang, Cavite',
+      latitude: 14.2300,
+      longitude: 120.9500,
+    },
+    {
+      id: 'ec13',
+      name: 'Barangay Biluso Covered Court',
+      address: 'Biluso, Silang, Cavite',
+      latitude: 14.1800,
+      longitude: 120.9550,
+    },
+    // SOUTHERN SILANG
+    {
+      id: 'ec14',
+      name: 'Barangay Balubad Covered Court',
       address: 'Balubad, Silang, Cavite',
       latitude: 14.1555,
       longitude: 120.9595,
     },
     {
-      id: 'ec8',
-      name: 'Putingkahoy Covered Court',
+      id: 'ec15',
+      name: 'Barangay Toledo Elementary School',
+      address: 'Toledo, Silang, Cavite',
+      latitude: 14.1750,
+      longitude: 120.9800,
+    },
+    {
+      id: 'ec16',
+      name: 'Barangay Lumil Barangay Hall',
+      address: 'Lumil, Silang, Cavite',
+      latitude: 14.2150,
+      longitude: 120.9750,
+    },
+    // ADDITIONAL CENTERS
+    {
+      id: 'ec17',
+      name: 'Barangay Kaong Multi-Purpose Hall',
+      address: 'Kaong, Silang, Cavite',
+      latitude: 14.1850,
+      longitude: 120.9680,
+    },
+    {
+      id: 'ec18',
+      name: 'Barangay Malabag Covered Court',
+      address: 'Malabag, Silang, Cavite',
+      latitude: 14.2200,
+      longitude: 120.9650,
+    },
+    {
+      id: 'ec19',
+      name: 'Barangay Putingkahoy Covered Court',
       address: 'Putingkahoy, Silang, Cavite',
       latitude: 14.1640,
       longitude: 120.9610,
+    },
+    {
+      id: 'ec20',
+      name: 'Barangay Banaba Barangay Hall',
+      address: 'Banaba, Silang, Cavite',
+      latitude: 14.1621,
+      longitude: 120.9560,
     },
   ];
 
   const getRiskColor = (riskLevel: string) => {
     switch (riskLevel) {
       case 'high':
-        return 'rgba(239, 68, 68, 0.3)'; // Red with transparency
+        return 'rgba(239, 68, 68, 0.3)';
       case 'medium':
-        return 'rgba(245, 158, 11, 0.3)'; // Orange with transparency
+        return 'rgba(245, 158, 11, 0.3)';
       case 'low':
-        return 'rgba(251, 191, 36, 0.3)'; // Yellow with transparency
+        return 'rgba(251, 191, 36, 0.3)';
       default:
-        return 'rgba(156, 163, 175, 0.3)'; // Gray with transparency
+        return 'rgba(156, 163, 175, 0.3)';
     }
   };
 
   const getRiskStrokeColor = (riskLevel: string) => {
     switch (riskLevel) {
       case 'high':
-        return '#EF4444'; // Red
+        return '#EF4444';
       case 'medium':
-        return '#F59E0B'; // Orange
+        return '#F59E0B';
       case 'low':
-        return '#FBFB24'; // Yellow
+        return '#FBFB24';
       default:
-        return '#9CA3AF'; // Gray
+        return '#9CA3AF';
     }
   };
 
@@ -600,13 +952,16 @@ const MapHomeScreen = ({ navigation }: any) => {
     <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       
+      {/* Offline Banner */}
+      {!isOnline && showOfflineNotice && <OfflineBanner />}
+      
       {/* Map Container */}
       <View style={styles.mapContainer}>
         <MapClusteringView
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={styles.map}
-          initialRegion={BARANGAY_LALAAN_2}
+          initialRegion={SILANG_CAVITE}
           showsUserLocation={true}
           showsMyLocationButton={false}
           showsCompass={false}
@@ -633,7 +988,7 @@ const MapHomeScreen = ({ navigation }: any) => {
             />
           ))}
 
-          {/* Risk Area Markers */}
+          {/* Risk Area Markers with Disaster Type Icons */}
           {riskAreas.map((area) => (
             <Marker
               key={`marker-${area.id}`}
@@ -642,7 +997,13 @@ const MapHomeScreen = ({ navigation }: any) => {
                 longitude: area.longitude,
               }}
               title={area.name}
-              description={`Risk Level: ${area.riskLevel.toUpperCase()}`}
+              description={`${area.disasterType.toUpperCase()} Risk - ${area.riskLevel.toUpperCase()}${
+                area.disasterType === 'fire' 
+                  ? `\n🌡️ ${area.temperature}°C | 💧 ${area.humidity}%` 
+                  : area.lastUpdated 
+                    ? `\n⏱️ ${area.lastUpdated}` 
+                    : ''
+              }`}
             >
               <View style={styles.riskMarker}>
                 <View
@@ -655,7 +1016,11 @@ const MapHomeScreen = ({ navigation }: any) => {
                       : styles.riskLowIcon,
                   ]}
                 >
-                  <Text style={styles.riskIconText}>⚠️</Text>
+                  <Text style={styles.riskIconText}>
+                    {area.disasterType === 'flood' ? '🌊' : 
+                     area.disasterType === 'earthquake' ? '🌋' : 
+                     '🔥'}
+                  </Text>
                 </View>
               </View>
             </Marker>
@@ -736,11 +1101,11 @@ const MapHomeScreen = ({ navigation }: any) => {
             </Marker>
           )}
 
-          {/* Barangay Center Marker */}
+          {/* Silang Center Marker */}
           <Marker
-            coordinate={BARANGAY_LALAAN_2}
-            title="Barangay Lalaan 2"
-            description="Your area"
+            coordinate={SILANG_CAVITE}
+            title="Silang, Cavite"
+            description="Municipality Center"
           >
             <View style={styles.barangayMarker}>
               <Text style={styles.barangayMarkerText}>🏛️</Text>
@@ -769,32 +1134,46 @@ const MapHomeScreen = ({ navigation }: any) => {
 
         {/* Location Badge */}
         <TouchableOpacity 
-          style={styles.locationBadge}
+          style={[styles.locationBadge, !isOnline && styles.locationBadgeOffline]}
           onPress={refreshLocation}
           activeOpacity={0.7}
         >
           <Text style={styles.locationBadgeText}>
-            {showingRoute 
-              ? '🗺️ Route Active' 
-              : userLocation 
-                ? '📍 Barangay Lalaan 2' 
-                : '📍 Getting Location...'}
+            {!isOnline 
+              ? '📡 Offline Mode'
+              : showingRoute 
+                ? '🗺️ Route Active' 
+                : userLocation 
+                  ? '📍 Silang, Cavite' 
+                  : '📍 Getting Location...'}
           </Text>
-          {!userLocation && !showingRoute && (
-            <Text style={styles.locationSubtext}>Tap to refresh</Text>
+          {!isOnline && (
+            <Text style={styles.locationSubtext}>
+              Real-time updates unavailable
+            </Text>
           )}
         </TouchableOpacity>
 
         {/* Risk Legend */}
         <View style={styles.riskLegend}>
-          <Text style={styles.legendTitle}>Risk Areas</Text>
+          <Text style={styles.legendTitle}>Disaster Risks</Text>
+          <View style={styles.legendItem}>
+            <Text style={styles.legendText}>🌊 Flood Zone</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <Text style={styles.legendText}>🌋 Earthquake</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <Text style={styles.legendText}>🔥 Fire Risk</Text>
+          </View>
+          <View style={styles.legendSeparator} />
           <View style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} />
-            <Text style={styles.legendText}>High Risk</Text>
+            <Text style={styles.legendSubtext}>High</Text>
           </View>
           <View style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: '#F59E0B' }]} />
-            <Text style={styles.legendText}>Medium Risk</Text>
+            <Text style={styles.legendSubtext}>Medium</Text>
           </View>
         </View>
       </View>
@@ -1022,6 +1401,47 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
+  offlineBanner: {
+    backgroundColor: '#FEF3C7',
+    borderBottomWidth: 1,
+    borderBottomColor: '#FDE68A',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  offlineBannerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  offlineIcon: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  offlineTextContainer: {
+    flex: 1,
+  },
+  offlineTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#92400E',
+    marginBottom: 2,
+  },
+  offlineSubtitle: {
+    fontSize: 12,
+    color: '#92400E',
+    opacity: 0.8,
+  },
+  offlineButton: {
+    padding: 8,
+  },
+  offlineButtonText: {
+    fontSize: 18,
+    color: '#92400E',
+    fontWeight: '700',
+  },
   mapContainer: {
     flex: 1,
     position: 'relative',
@@ -1061,9 +1481,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  actionIcon: {
-    fontSize: 20,
-  },
   recenterButton: {
     position: 'absolute',
     bottom: 180,
@@ -1096,6 +1513,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 4,
+  },
+  locationBadgeOffline: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
   },
   locationBadgeText: {
     fontSize: 14,
@@ -1140,6 +1562,15 @@ const styles = StyleSheet.create({
   },
   legendText: {
     fontSize: 11,
+    color: '#64748B',
+  },
+  legendSeparator: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 6,
+  },
+  legendSubtext: {
+    fontSize: 10,
     color: '#64748B',
   },
   markerContainer: {
