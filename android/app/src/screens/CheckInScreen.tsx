@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getAuth } from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
 import Geolocation from '@react-native-community/geolocation';
+import NetInfo from '@react-native-community/netinfo';
 import { colors } from '../config/colors';
 
 // Import modals
@@ -39,6 +40,21 @@ const CheckInScreen = ({ navigation }: any) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddFamilyModal, setShowAddFamilyModal] = useState(false);
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+
+  // Network status monitoring
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      const online = (state.isConnected && state.isInternetReachable) ?? false;
+      setIsOnline(online);
+      
+      if (!online) {
+        console.log('📡 Offline - Check-ins will not be sent');
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     if (user) {
@@ -172,6 +188,16 @@ const CheckInScreen = ({ navigation }: any) => {
       return;
     }
 
+    // Check if online
+    if (!isOnline) {
+      Alert.alert(
+        'Offline',
+        'Cannot send check-in while offline. Your check-in will be sent when connection is restored.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -275,6 +301,19 @@ const CheckInScreen = ({ navigation }: any) => {
           <View style={styles.placeholder} />
         </View>
 
+        {/* Offline Banner */}
+        {!isOnline && (
+          <View style={styles.offlineBanner}>
+            <Text style={styles.offlineIcon}>📡</Text>
+            <View style={styles.offlineContent}>
+              <Text style={styles.offlineTitle}>Offline Mode</Text>
+              <Text style={styles.offlineSubtitle}>
+                Cannot send check-ins without internet
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* Check-In Buttons */}
         <View style={styles.checkInSection}>
           <Text style={styles.sectionTitle}>How are you?</Text>
@@ -283,9 +322,13 @@ const CheckInScreen = ({ navigation }: any) => {
           </Text>
 
           <TouchableOpacity
-            style={[styles.checkInButton, styles.safeButton]}
+            style={[
+              styles.checkInButton, 
+              styles.safeButton,
+              !isOnline && styles.checkInButtonDisabled
+            ]}
             onPress={() => handleCheckIn('safe')}
-            disabled={loading}
+            disabled={loading || !isOnline}
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -305,9 +348,13 @@ const CheckInScreen = ({ navigation }: any) => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.checkInButton, styles.warningButton]}
+            style={[
+              styles.checkInButton, 
+              styles.warningButton,
+              !isOnline && styles.checkInButtonDisabled
+            ]}
             onPress={() => handleCheckIn('warning')}
-            disabled={loading}
+            disabled={loading || !isOnline}
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -327,9 +374,13 @@ const CheckInScreen = ({ navigation }: any) => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.checkInButton, styles.dangerButton]}
+            style={[
+              styles.checkInButton, 
+              styles.dangerButton,
+              !isOnline && styles.checkInButtonDisabled
+            ]}
             onPress={() => handleCheckIn('danger')}
-            disabled={loading}
+            disabled={loading || !isOnline}
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
@@ -493,6 +544,33 @@ const styles = StyleSheet.create({
   placeholder: {
     width: 40,
   },
+  offlineBanner: {
+    backgroundColor: '#FEF3C7',
+    borderBottomWidth: 1,
+    borderBottomColor: '#FDE68A',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  offlineIcon: {
+    fontSize: 24,
+  },
+  offlineContent: {
+    flex: 1,
+  },
+  offlineTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#92400E',
+    marginBottom: 2,
+  },
+  offlineSubtitle: {
+    fontSize: 12,
+    color: '#92400E',
+    opacity: 0.8,
+  },
   checkInSection: {
     paddingHorizontal: 20,
     paddingTop: 32,
@@ -520,6 +598,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 3,
+  },
+  checkInButtonDisabled: {
+    opacity: 0.5,
   },
   safeButton: {
     backgroundColor: '#10B981',

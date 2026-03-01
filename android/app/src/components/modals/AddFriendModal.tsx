@@ -21,29 +21,49 @@ interface AddFriendModalProps {
 }
 
 export interface FriendData {
-  email: string;
+  email?: string;
+  phoneNumber?: string;
   nickname?: string;
 }
+
+type ContactMethod = 'email' | 'phone';
 
 const AddFriendModal: React.FC<AddFriendModalProps> = ({
   visible,
   onClose,
   onSubmit,
 }) => {
+  const [contactMethod, setContactMethod] = useState<ContactMethod>('email');
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [nickname, setNickname] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
-    if (!email.trim()) {
-      Alert.alert('Error', 'Please enter an email address');
-      return;
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email.trim())) {
-      Alert.alert('Error', 'Please enter a valid email address');
-      return;
+    // Validate contact method input
+    if (contactMethod === 'email') {
+      if (!email.trim()) {
+        Alert.alert('Error', 'Please enter an email address');
+        return;
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        Alert.alert('Error', 'Please enter a valid email address');
+        return;
+      }
+    } else {
+      if (!phoneNumber.trim()) {
+        Alert.alert('Error', 'Please enter a phone number');
+        return;
+      }
+      if (!phoneNumber.startsWith('+63')) {
+        Alert.alert('Error', 'Please enter a valid Philippine phone number (+63)');
+        return;
+      }
+      if (phoneNumber.length < 13) {
+        Alert.alert('Error', 'Please enter a complete phone number');
+        return;
+      }
     }
 
     setLoading(true);
@@ -58,25 +78,45 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({
         return;
       }
 
-      const normalizedEmail = email.trim().toLowerCase();
+      let searchField;
+      let searchValue;
 
-      // Check if trying to add yourself
-      if (normalizedEmail === currentUser.email?.toLowerCase()) {
-        Alert.alert('Error', 'You cannot add yourself as a friend');
-        setLoading(false);
-        return;
+      if (contactMethod === 'email') {
+        const normalizedEmail = email.trim().toLowerCase();
+        
+        // Check if trying to add yourself
+        if (normalizedEmail === currentUser.email?.toLowerCase()) {
+          Alert.alert('Error', 'You cannot add yourself as a friend');
+          setLoading(false);
+          return;
+        }
+
+        searchField = 'email';
+        searchValue = normalizedEmail;
+      } else {
+        const normalizedPhone = phoneNumber.trim();
+        
+        // Check if trying to add yourself
+        if (normalizedPhone === currentUser.phoneNumber) {
+          Alert.alert('Error', 'You cannot add yourself as a friend');
+          setLoading(false);
+          return;
+        }
+
+        searchField = 'phoneNumber';
+        searchValue = normalizedPhone;
       }
 
-      // Search for user by email in Firestore
+      // Search for user by email or phone in Firestore
       const usersSnapshot = await firestore()
         .collection('users')
-        .where('email', '==', normalizedEmail)
+        .where(searchField, '==', searchValue)
         .get();
 
       if (usersSnapshot.empty) {
         Alert.alert(
           'User Not Found',
-          `No user found with email ${email}. They need to create an account first.`
+          `No user found with ${contactMethod === 'email' ? 'email' : 'phone number'} ${searchValue}. They need to create an account first.`
         );
         setLoading(false);
         return;
@@ -119,9 +159,11 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({
         fromUserId: currentUser.uid,
         fromUserName: currentUser.displayName || 'User',
         fromUserEmail: currentUser.email || '',
+        fromUserPhone: currentUser.phoneNumber || '',
         toUserId: targetUserId,
         toUserName: targetUserData.displayName || 'User',
         toUserEmail: targetUserData.email || '',
+        toUserPhone: targetUserData.phoneNumber || '',
         nickname: nickname.trim() || null,
         status: 'pending',
         createdAt: firestore.FieldValue.serverTimestamp(),
@@ -141,18 +183,21 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({
 
       Alert.alert(
         'Request Sent!',
-        `Friend request sent to ${targetUserData.displayName || email}. They will be added once they accept.`
+        `Friend request sent to ${targetUserData.displayName || searchValue}. They will be added once they accept.`
       );
 
       // Call onSubmit callback
       onSubmit({
-        email: normalizedEmail,
+        email: contactMethod === 'email' ? searchValue : undefined,
+        phoneNumber: contactMethod === 'phone' ? searchValue : undefined,
         nickname: nickname.trim(),
       });
 
       // Reset form
       setEmail('');
+      setPhoneNumber('');
       setNickname('');
+      setContactMethod('email');
       setLoading(false);
     } catch (error: any) {
       console.error('Error sending friend request:', error);
@@ -163,7 +208,9 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({
 
   const handleClose = () => {
     setEmail('');
+    setPhoneNumber('');
     setNickname('');
+    setContactMethod('email');
     onClose();
   };
 
@@ -187,25 +234,68 @@ const AddFriendModal: React.FC<AddFriendModalProps> = ({
             <View style={styles.infoCard}>
               <Text style={styles.infoIcon}>👥</Text>
               <Text style={styles.infoText}>
-                Enter the email address of your friend. They will receive a request and need to accept it to enable location tracking.
+                Enter the {contactMethod === 'email' ? 'email' : 'phone number'} of your friend. They will receive a request and need to accept it to enable location tracking.
               </Text>
             </View>
 
+            {/* Contact Method Tabs */}
+            <View style={styles.tabContainer}>
+              <TouchableOpacity
+                style={[styles.tab, contactMethod === 'email' && styles.tabActive]}
+                onPress={() => setContactMethod('email')}
+                disabled={loading}
+              >
+                <Text style={styles.tabIcon}>📧</Text>
+                <Text style={[styles.tabText, contactMethod === 'email' && styles.tabTextActive]}>
+                  Email
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.tab, contactMethod === 'phone' && styles.tabActive]}
+                onPress={() => setContactMethod('phone')}
+                disabled={loading}
+              >
+                <Text style={styles.tabIcon}>📱</Text>
+                <Text style={[styles.tabText, contactMethod === 'phone' && styles.tabTextActive]}>
+                  Phone
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             <View style={styles.form}>
-              {/* Email Input */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Email Address *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="friend@example.com"
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  editable={!loading}
-                  placeholderTextColor="#94A3B8"
-                />
-              </View>
+              {/* Email or Phone Input */}
+              {contactMethod === 'email' ? (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Email Address *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="friend@example.com"
+                    value={email}
+                    onChangeText={setEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    editable={!loading}
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+              ) : (
+                <View style={styles.inputGroup}>
+                  <Text style={styles.label}>Phone Number *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="+63 912 345 6789"
+                    value={phoneNumber}
+                    onChangeText={setPhoneNumber}
+                    keyboardType="phone-pad"
+                    editable={!loading}
+                    placeholderTextColor="#94A3B8"
+                  />
+                  <Text style={styles.helperText}>
+                    Format: +63 XXX XXX XXXX
+                  </Text>
+                </View>
+              )}
 
               {/* Nickname Input (Optional) */}
               <View style={styles.inputGroup}>
@@ -295,7 +385,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#EFF6FF',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 24,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: '#BFDBFE',
     flexDirection: 'row',
@@ -310,6 +400,42 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#1E40AF',
     lineHeight: 18,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 24,
+  },
+  tab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 10,
+    gap: 6,
+  },
+  tabActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  tabIcon: {
+    fontSize: 16,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748B',
+  },
+  tabTextActive: {
+    color: '#1E293B',
+    fontWeight: '700',
   },
   form: {
     gap: 20,
