@@ -139,16 +139,6 @@ const PhoneVerificationScreen: React.FC<Props> = ({ navigation, route }) => {
               {
                 text: 'Continue',
                 onPress: () => {
-                  // Navigate to profile details
-                  navigation.reset({
-                    index: 0,
-                    routes: [
-                      { 
-                        name: 'ProfileDetails', 
-                        params: { userId: result.userId } 
-                      }
-                    ],
-                  });
                 },
               },
             ]
@@ -161,11 +151,6 @@ const PhoneVerificationScreen: React.FC<Props> = ({ navigation, route }) => {
               {
                 text: 'OK',
                 onPress: () => {
-                  // Navigation handled by RootNavigator
-                  navigation.reset({
-                    index: 0,
-                    routes: [{ name: 'Home' }],
-                  });
                 },
               },
             ]

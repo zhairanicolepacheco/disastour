@@ -459,7 +459,7 @@ const CheckInScreen = ({ navigation }: any) => {
           <Text style={styles.navLabel}>Hotline</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Home')}>
+        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('MapHome')}>
           <Text style={styles.navIcon}>📍</Text>
           <Text style={styles.navLabel}>Location</Text>
         </TouchableOpacity>

@@ -36,7 +36,6 @@ export type RootStackParamList = {
     isSignUp?: boolean;
   };
   ProfileDetails: { userId: string };
-  Home: undefined;
   MapHome: undefined;
   Profile: undefined;
   EditProfile: undefined;
@@ -64,29 +63,17 @@ export const RootNavigator = () => {
     });
   }, []);
 
-  // Second useEffect - Auth listener (UPDATED for phone auth)
+  // Second useEffect - Auth listener
   useEffect(() => {
     const authInstance = getAuth();
     const subscriber = onAuthStateChanged(authInstance, async (user) => {
       setUser(user);
 
       if (user) {
-        // User is authenticated (either email verified OR phone auth)
         const isEmailUser = user.email && user.emailVerified;
         const isPhoneUser = user.phoneNumber && !user.email;
-        
-        console.log('Auth State:', {
-          uid: user.uid,
-          email: user.email,
-          emailVerified: user.emailVerified,
-          phoneNumber: user.phoneNumber,
-          isEmailUser,
-          isPhoneUser
-        });
-        
-        // Check if authenticated (email verified OR phone user)
+
         if (isEmailUser || isPhoneUser) {
-          // Check if user has completed profile
           try {
             const userDoc = await firestore()
               .collection('users')
@@ -94,32 +81,20 @@ export const RootNavigator = () => {
               .get();
 
             const userData = userDoc.data();
-            
-            // Check if profile is complete (has displayName and at least some profile data)
-            const profileComplete = userData && 
-              userData.displayName && 
+            const profileComplete =
+              !!userData &&
+              !!userData.displayName &&
               userData.displayName.trim() !== '';
 
             setHasProfile(profileComplete);
-            
-            console.log('Profile Check:', {
-              uid: user.uid,
-              authMethod: isEmailUser ? 'email' : 'phone',
-              displayName: userData?.displayName,
-              hasUserData: !!userData,
-              profileComplete
-            });
           } catch (error) {
             console.error('Error checking user profile:', error);
             setHasProfile(false);
           }
         } else {
-          // Email user but not verified yet
-          console.log('User not authenticated - email not verified');
           setHasProfile(null);
         }
       } else {
-        console.log('No user signed in');
         setHasProfile(null);
       }
 
@@ -129,11 +104,14 @@ export const RootNavigator = () => {
     return subscriber;
   }, []);
 
-  // Show loading screen while checking AsyncStorage or initializing auth
-  // Wait for profile check if user is authenticated (email verified OR phone user)
-  const isAuthenticated = user && (user.emailVerified || (user.phoneNumber && !user.email));
+  // Derived auth state
+  const isEmailUser = user?.email && user?.emailVerified;
+  const isPhoneUser = user?.phoneNumber && !user?.email;
+  const isAuthenticated = !!(isEmailUser || isPhoneUser);
+
+  // Wait until everything is resolved before rendering the navigator
   const shouldWaitForProfileCheck = isAuthenticated && hasProfile === null;
-  
+
   if (isLoading || initializing || shouldWaitForProfileCheck) {
     return (
       <View
@@ -149,52 +127,30 @@ export const RootNavigator = () => {
     );
   }
 
-  const getInitialRouteName = () => {
-    console.log('getInitialRouteName - State:', {
-      hasUser: !!user,
-      email: user?.email,
-      emailVerified: user?.emailVerified,
-      phoneNumber: user?.phoneNumber,
-      hasProfile,
-      hasSeenPermission
-    });
+  // Determine which branch we're in, then derive the correct initialRouteName
+  // so it always refers to a screen that exists in the rendered stack.
+  const unauthenticated = !user || (!user.emailVerified && !user.phoneNumber);
+  const needsProfile = isAuthenticated && !hasProfile;
+  const fullyReady = isAuthenticated && hasProfile;
 
-    // Not logged in
-    if (!user) {
-      return hasSeenPermission ? "GetStarted" : "LocationPermission";
+  const getInitialRouteName = (): keyof RootStackParamList => {
+    if (unauthenticated) {
+      return hasSeenPermission ? 'GetStarted' : 'LocationPermission';
     }
-
-    // Check if authenticated (email verified OR phone user)
-    const isEmailUser = user.email && user.emailVerified;
-    const isPhoneUser = user.phoneNumber && !user.email;
-    const isAuthenticated = isEmailUser || isPhoneUser;
-    
-    console.log('Auth Check:', { isEmailUser, isPhoneUser, isAuthenticated });
-
-    if (!isAuthenticated) {
-      // User exists but not authenticated yet (email not verified)
-      return hasSeenPermission ? "GetStarted" : "LocationPermission";
+    if (needsProfile) {
+      return 'ProfileDetails';
     }
-
-    // Authenticated - check profile
-    if (hasProfile === false) {
-      console.log('→ Navigating to ProfileDetails (no profile)');
-      return "ProfileDetails";
-    } else if (hasProfile === true) {
-      console.log('→ Navigating to Home (profile complete)');
-      return "Home";
-    } else {
-      // hasProfile is null - still loading, should not reach here
-      console.log('→ hasProfile is null, showing loading...');
-      return "GetStarted"; // Fallback
-    }
+    return 'MapHome';
   };
 
   return (
     <NavigationContainer>
-      <Stack.Navigator initialRouteName={getInitialRouteName()} screenOptions={{ headerShown: false }}>
-        {!user || (!user.emailVerified && !user.phoneNumber) ? (
-          // Not logged in or email not verified (and not phone user)
+      <Stack.Navigator
+        initialRouteName={getInitialRouteName()}
+        screenOptions={{ headerShown: false }}
+      >
+        {unauthenticated ? (
+          // ── Branch 1: not logged in / email unverified ──────────────────
           <>
             <Stack.Screen name="LocationPermission" component={LocationPermissionScreen} />
             <Stack.Screen name="GetStarted" component={GetStartedScreen} />
@@ -203,14 +159,11 @@ export const RootNavigator = () => {
             <Stack.Screen
               name="PhoneVerification"
               component={PhoneVerificationScreen}
-              options={{ 
-                headerShown: false,
-                gestureEnabled: false, // Prevent swipe back
-              }}
+              options={{ headerShown: false, gestureEnabled: false }}
             />
           </>
-        ) : !hasProfile ? (
-          // Authenticated but profile incomplete - force ProfileDetailsScreen
+        ) : needsProfile ? (
+          // ── Branch 2: authenticated but profile incomplete ──────────────
           <>
             <Stack.Screen
               name="ProfileDetails"
@@ -218,8 +171,6 @@ export const RootNavigator = () => {
               initialParams={{ userId: user.uid }}
               options={{ gestureEnabled: false }}
             />
-            {/* Hidden screens for navigation after profile completion */}
-            <Stack.Screen name="Home" component={MapHomeScreen} />
             <Stack.Screen name="MapHome" component={MapHomeScreen} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
             <Stack.Screen name="EditProfile" component={EditProfileScreen} />
@@ -230,9 +181,8 @@ export const RootNavigator = () => {
             <Stack.Screen name="FamilyRequests" component={FamilyRequestsScreen} />
           </>
         ) : (
-          // Authenticated + profile complete - full app access
+          // ── Branch 3: fully authenticated with profile ──────────────────
           <>
-            <Stack.Screen name="Home" component={MapHomeScreen} />
             <Stack.Screen name="MapHome" component={MapHomeScreen} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
             <Stack.Screen name="EditProfile" component={EditProfileScreen} />

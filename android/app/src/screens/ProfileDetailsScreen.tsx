@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { getAuth } from '@react-native-firebase/auth';
+import firestore from '@react-native-firebase/firestore';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { RootStackParamList } from '../navigation/RootNavigator';
 import { authService } from '../services/authService';
@@ -37,6 +38,10 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
   const userEmail = currentUser?.email;
   const userPhone = currentUser?.phoneNumber;
   const authMethod = userEmail ? 'email' : 'phone';
+  
+  console.log('🔍 ProfileDetails - Auth Method:', authMethod);
+  console.log('📧 Email:', userEmail);
+  console.log('📱 Phone:', userPhone);
   
   // States
   const [name, setName] = useState('');
@@ -146,6 +151,8 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
   };
 
   const handleCompleteProfile = async () => {
+    console.log('💾 === SAVE PROFILE START ===');
+    
     if (!validateInputs()) return;
 
     setLoading(true);
@@ -153,51 +160,75 @@ const ProfileDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
       // Upload profile image if selected (optional)
       let profileImageUrl = null;
       if (profileImage) {
+        console.log('📸 Uploading profile image...');
         setUploadingImage(true);
         const uploadResult = await authService.uploadProfileImage(userId, profileImage);
         if (uploadResult.success) {
           profileImageUrl = uploadResult.imageUrl;
+          console.log('✅ Image uploaded:', profileImageUrl);
         }
         setUploadingImage(false);
       }
 
-      // Update user profile with appropriate data based on auth method
+      // Prepare profile data
       const profileData: any = {
-        displayName: name,
-        address,
-        contactNumber: contactNo,
+        displayName: name.trim(),
+        address: address.trim(),
+        contactNumber: contactNo.trim(),
         photoURL: profileImageUrl,
         authMethod,
+        createdAt: firestore.FieldValue.serverTimestamp(),
+        updatedAt: firestore.FieldValue.serverTimestamp(),
       };
 
-      // Add email or phone based on auth method
+      // ✅ CRITICAL: Add email or phone based on auth method
       if (authMethod === 'email') {
-        profileData.email = email;
+        profileData.email = email.trim().toLowerCase();
+        console.log('📧 Saving email user:', profileData.email);
       } else {
-        profileData.phoneNumber = phoneNumber;
+        profileData.phoneNumber = phoneNumber.trim();
+        console.log('📱 Saving phone user:', profileData.phoneNumber);
       }
 
+      console.log('💾 Profile data to save:', {
+        userId,
+        displayName: profileData.displayName,
+        email: profileData.email,
+        phoneNumber: profileData.phoneNumber,
+        authMethod: profileData.authMethod,
+      });
+
+      // Save to Firestore using authService
       const updateResult = await authService.updateUserProfile(userId, profileData);
 
       if (updateResult.success) {
+        console.log('✅ Profile saved successfully!');
+        
+        // Verify data was saved
+        const savedDoc = await firestore().collection('users').doc(userId).get();
+        console.log('🔍 Verification - Saved data:', savedDoc.data());
+        
         Alert.alert('Success', 'Profile completed! Welcome to Disastour', [
           {
             text: 'OK',
             onPress: () => {
               navigation.reset({
                 index: 0,
-                routes: [{ name: 'Home' }],
+                routes: [{ name: 'MapHome' }],
               });
             },
           },
         ]);
       } else {
+        console.error('❌ Profile save failed:', updateResult.error);
         Alert.alert('Error', updateResult.error);
       }
     } catch (error: any) {
+      console.error('❌ ERROR:', error);
       Alert.alert('Error', error.message);
     } finally {
       setLoading(false);
+      console.log('💾 === SAVE PROFILE END ===');
     }
   };
 

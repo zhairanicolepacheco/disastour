@@ -505,7 +505,7 @@ const ProfileScreen = ({ navigation }: any) => {
 
         <TouchableOpacity 
           style={styles.navItem} 
-          onPress={() => navigation.navigate('Home')}
+          onPress={() => navigation.navigate('MapHome')}
         >
           <Text style={styles.navIcon}>📍</Text>
           <Text style={styles.navLabel}>Location</Text>

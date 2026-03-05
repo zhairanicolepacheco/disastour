@@ -40,50 +40,67 @@ const relationships = [
   'Other',
 ];
 
-type ContactMethod = 'email' | 'phone';
-
 const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
   visible,
   onClose,
   onSubmit,
 }) => {
-  const [contactMethod, setContactMethod] = useState<ContactMethod>('email');
-  const [email, setEmail] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [searchInput, setSearchInput] = useState('');
   const [relationship, setRelationship] = useState('');
   const [nickname, setNickname] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const normalizePhoneNumber = (phone: string): string => {
+    // Remove all spaces and special characters
+    let normalized = phone.replace(/[\s\-\(\)]/g, '');
+    
+    // Convert 09 format to +63
+    if (normalized.startsWith('09')) {
+      normalized = '+63' + normalized.substring(1);
+    }
+    
+    // Ensure it starts with +63
+    if (!normalized.startsWith('+63') && normalized.length === 10) {
+      normalized = '+63' + normalized;
+    }
+    
+    return normalized;
+  };
+
+  const detectInputType = (input: string): 'email' | 'phone' | 'invalid' => {
+    const trimmed = input.trim();
+    
+    // Email detection
+    if (trimmed.includes('@') && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      return 'email';
+    }
+    
+    // Phone detection
+    if (trimmed.startsWith('+63') || trimmed.startsWith('09') || /^\d{10,}$/.test(trimmed)) {
+      return 'phone';
+    }
+    
+    return 'invalid';
+  };
+
   const handleSubmit = async () => {
-    // Validate contact method input
-    if (contactMethod === 'email') {
-      if (!email.trim()) {
-        Alert.alert('Error', 'Please enter an email address');
-        return;
-      }
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email.trim())) {
-        Alert.alert('Error', 'Please enter a valid email address');
-        return;
-      }
-    } else {
-      if (!phoneNumber.trim()) {
-        Alert.alert('Error', 'Please enter a phone number');
-        return;
-      }
-      if (!phoneNumber.startsWith('+63')) {
-        Alert.alert('Error', 'Please enter a valid Philippine phone number (+63)');
-        return;
-      }
-      if (phoneNumber.length < 13) {
-        Alert.alert('Error', 'Please enter a complete phone number');
-        return;
-      }
+    console.log('🔍 === ADD FAMILY DEBUG START ===');
+    
+    if (!searchInput.trim()) {
+      Alert.alert('Error', 'Please enter an email address or phone number');
+      return;
     }
 
     if (!relationship) {
       Alert.alert('Error', 'Please select a relationship');
+      return;
+    }
+
+    const inputType = detectInputType(searchInput);
+    
+    if (inputType === 'invalid') {
+      Alert.alert('Error', 'Please enter a valid email address or phone number');
       return;
     }
 
@@ -99,54 +116,67 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
         return;
       }
 
-      let targetUserDoc;
-      let searchField;
-      let searchValue;
+      console.log('👤 Current User:', currentUser.uid);
+      console.log('📝 Input:', searchInput);
+      console.log('🔍 Detected Type:', inputType);
 
-      if (contactMethod === 'email') {
-        const normalizedEmail = email.trim().toLowerCase();
-        
-        // Check if trying to add yourself
-        if (normalizedEmail === currentUser.email?.toLowerCase()) {
-          Alert.alert('Error', 'You cannot add yourself as a family member');
-          setLoading(false);
-          return;
-        }
+      let searchField: string;
+      let searchValue: string;
 
+      if (inputType === 'email') {
         searchField = 'email';
-        searchValue = normalizedEmail;
-      } else {
-        const normalizedPhone = phoneNumber.trim();
+        searchValue = searchInput.trim().toLowerCase();
         
         // Check if trying to add yourself
-        if (normalizedPhone === currentUser.phoneNumber) {
+        if (searchValue === currentUser.email?.toLowerCase()) {
           Alert.alert('Error', 'You cannot add yourself as a family member');
           setLoading(false);
           return;
         }
-
+      } else {
         searchField = 'phoneNumber';
-        searchValue = normalizedPhone;
+        searchValue = normalizePhoneNumber(searchInput);
+        
+        console.log('📱 Normalized Phone:', searchValue);
+        
+        // Check if trying to add yourself
+        if (searchValue === currentUser.phoneNumber) {
+          Alert.alert('Error', 'You cannot add yourself as a family member');
+          setLoading(false);
+          return;
+        }
       }
 
-      // Search for user by email or phone in Firestore
+      console.log('🔍 Searching:', searchField, '==', searchValue);
+
+      // Search for user in Firestore
       const usersSnapshot = await firestore()
         .collection('users')
         .where(searchField, '==', searchValue)
         .get();
 
+      console.log('📊 Users found:', usersSnapshot.size);
+
       if (usersSnapshot.empty) {
+        console.log('❌ No user found');
         Alert.alert(
           'User Not Found',
-          `No user found with ${contactMethod === 'email' ? 'email' : 'phone number'} ${searchValue}. They need to create an account first.`
+          `No user found with ${inputType === 'email' ? 'email' : 'phone number'}: ${searchValue}\n\nThey need to create an account first.`
         );
         setLoading(false);
         return;
       }
 
-      const targetUserDocSnap = usersSnapshot.docs[0];
-      const targetUserId = targetUserDocSnap.id;
-      const targetUserData = targetUserDocSnap.data();
+      const targetUserDoc = usersSnapshot.docs[0];
+      const targetUserId = targetUserDoc.id;
+      const targetUserData = targetUserDoc.data();
+
+      console.log('✅ Found user:', targetUserId);
+      console.log('📄 User data:', {
+        displayName: targetUserData.displayName,
+        email: targetUserData.email,
+        phoneNumber: targetUserData.phoneNumber,
+      });
 
       // Check if already family
       const existingFamily = await firestore()
@@ -176,25 +206,35 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
         return;
       }
 
+      console.log('📝 Creating family request...');
+
       // Create family request
-      await firestore().collection('family_requests').add({
+      const requestData = {
         fromUserId: currentUser.uid,
         fromUserName: currentUser.displayName || 'User',
-        fromUserEmail: currentUser.email || '',
-        fromUserPhone: currentUser.phoneNumber || '',
+        fromUserEmail: currentUser.email || null,
+        fromUserPhone: currentUser.phoneNumber || null,
         toUserId: targetUserId,
         toUserName: targetUserData.displayName || 'User',
-        toUserEmail: targetUserData.email || '',
-        toUserPhone: targetUserData.phoneNumber || '',
+        toUserEmail: targetUserData.email || null,
+        toUserPhone: targetUserData.phoneNumber || null,
         relationship: relationship,
         nickname: nickname.trim() || null,
         contactPhone: contactPhone.trim() || null,
         status: 'pending',
         createdAt: firestore.FieldValue.serverTimestamp(),
-      });
+      };
 
-      // Send notification to the target user
-      await firestore().collection('notifications').add({
+      const requestRef = await firestore()
+        .collection('family_requests')
+        .add(requestData);
+
+      console.log('✅ Family request created:', requestRef.id);
+
+      // Create notification for target user
+      console.log('🔔 Creating notification...');
+
+      const notificationData = {
         userId: targetUserId,
         type: 'family_request',
         title: 'New Family Request',
@@ -204,9 +244,17 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
         relationship: relationship,
         read: false,
         createdAt: firestore.FieldValue.serverTimestamp(),
-      });
+      };
+
+      const notificationRef = await firestore()
+        .collection('notifications')
+        .add(notificationData);
+
+      console.log('✅ Notification created:', notificationRef.id);
+      console.log('📬 Notification sent to user:', targetUserId);
 
       const displayName = nickname.trim() || targetUserData.displayName || searchValue;
+      
       Alert.alert(
         'Request Sent!',
         `Family request sent to ${displayName}. They will be added once they accept.`
@@ -214,35 +262,38 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
 
       // Call onSubmit callback
       onSubmit({
-        email: contactMethod === 'email' ? searchValue : undefined,
-        phoneNumber: contactMethod === 'phone' ? searchValue : undefined,
+        email: inputType === 'email' ? searchValue : undefined,
+        phoneNumber: inputType === 'phone' ? searchValue : undefined,
         relationship,
         nickname: nickname.trim(),
         contactPhone: contactPhone.trim(),
       });
 
       // Reset form
-      setEmail('');
-      setPhoneNumber('');
+      setSearchInput('');
       setRelationship('');
       setNickname('');
       setContactPhone('');
-      setContactMethod('email');
       setLoading(false);
+      
+      console.log('🎉 === ADD FAMILY SUCCESS ===');
+      
     } catch (error: any) {
-      console.error('Error sending family request:', error);
-      Alert.alert('Error', 'Failed to send family request. Please try again.');
+      console.error('❌ ERROR:', error);
+      console.error('Error details:', {
+        code: error.code,
+        message: error.message,
+      });
+      Alert.alert('Error', `Failed to send family request: ${error.message}`);
       setLoading(false);
     }
   };
 
   const handleClose = () => {
-    setEmail('');
-    setPhoneNumber('');
+    setSearchInput('');
     setRelationship('');
     setNickname('');
     setContactPhone('');
-    setContactMethod('email');
     onClose();
   };
 
@@ -266,68 +317,29 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
             <View style={styles.infoCard}>
               <Text style={styles.infoIcon}>👨‍👩‍👧‍👦</Text>
               <Text style={styles.infoText}>
-                Enter the {contactMethod === 'email' ? 'email' : 'phone number'} of your family member. They will receive a request and need to accept it.
+                Enter their email address or phone number. The system will automatically detect which one you entered.
               </Text>
             </View>
 
-            {/* Contact Method Tabs */}
-            <View style={styles.tabContainer}>
-              <TouchableOpacity
-                style={[styles.tab, contactMethod === 'email' && styles.tabActive]}
-                onPress={() => setContactMethod('email')}
-                disabled={loading}
-              >
-                <Text style={styles.tabIcon}>📧</Text>
-                <Text style={[styles.tabText, contactMethod === 'email' && styles.tabTextActive]}>
-                  Email
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.tab, contactMethod === 'phone' && styles.tabActive]}
-                onPress={() => setContactMethod('phone')}
-                disabled={loading}
-              >
-                <Text style={styles.tabIcon}>📱</Text>
-                <Text style={[styles.tabText, contactMethod === 'phone' && styles.tabTextActive]}>
-                  Phone
-                </Text>
-              </TouchableOpacity>
-            </View>
-
             <View style={styles.form}>
-              {/* Email or Phone Input */}
-              {contactMethod === 'email' ? (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Email Address *</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="family@example.com"
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    editable={!loading}
-                    placeholderTextColor="#94A3B8"
-                  />
-                </View>
-              ) : (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Phone Number *</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="+63 912 345 6789"
-                    value={phoneNumber}
-                    onChangeText={setPhoneNumber}
-                    keyboardType="phone-pad"
-                    editable={!loading}
-                    placeholderTextColor="#94A3B8"
-                  />
-                  <Text style={styles.helperText}>
-                    Format: +63 XXX XXX XXXX
-                  </Text>
-                </View>
-              )}
+              {/* Smart Email/Phone Input */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Email or Phone Number *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="friend@email.com or +63 912 345 6789"
+                  value={searchInput}
+                  onChangeText={setSearchInput}
+                  keyboardType="default"
+                  autoCapitalize="none"
+                  editable={!loading}
+                  placeholderTextColor="#94A3B8"
+                />
+                <Text style={styles.helperText}>
+                  📧 Email format: user@email.com{'\n'}
+                  📱 Phone format: +63 XXX XXX XXXX or 09XX XXX XXXX
+                </Text>
+              </View>
 
               {/* Relationship Selection */}
               <View style={styles.inputGroup}>
@@ -401,7 +413,7 @@ const AddFamilyModal: React.FC<AddFamilyModalProps> = ({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.button, styles.submitButton]}
+              style={[styles.button, styles.submitButton, loading && styles.buttonDisabled]}
               onPress={handleSubmit}
               disabled={loading}
             >
@@ -461,7 +473,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#EFF6FF',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 16,
+    marginBottom: 24,
     borderWidth: 1,
     borderColor: '#BFDBFE',
     flexDirection: 'row',
@@ -476,42 +488,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#1E40AF',
     lineHeight: 18,
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 24,
-  },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 10,
-    gap: 6,
-  },
-  tabActive: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  tabIcon: {
-    fontSize: 16,
-  },
-  tabText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  tabTextActive: {
-    color: '#1E293B',
-    fontWeight: '700',
   },
   form: {
     gap: 20,
@@ -536,9 +512,10 @@ const styles = StyleSheet.create({
     color: '#1E293B',
   },
   helperText: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#64748B',
     marginTop: 4,
+    lineHeight: 16,
   },
   relationshipGrid: {
     flexDirection: 'row',
@@ -574,6 +551,9 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   cancelButton: {
     backgroundColor: '#F8FAFC',

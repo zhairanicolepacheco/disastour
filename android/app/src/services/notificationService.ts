@@ -143,8 +143,6 @@ class NotificationService {
         name: 'General Notifications',
         importance: AndroidImportance.DEFAULT,
         sound: 'general_notification',
-        vibration: true,
-        vibrationPattern: [300, 500],
       });
 
       await notifee.createChannel({
@@ -152,8 +150,6 @@ class NotificationService {
         name: 'Safe Check-ins',
         importance: AndroidImportance.DEFAULT,
         sound: 'safe_checkin',
-        vibration: true,
-        vibrationPattern: [200, 300],
       });
 
       await notifee.createChannel({
@@ -161,8 +157,6 @@ class NotificationService {
         name: 'Warning Alerts',
         importance: AndroidImportance.HIGH,
         sound: 'warning_checkin',
-        vibration: true,
-        vibrationPattern: [300, 500, 300],
       });
 
       await notifee.createChannel({
@@ -170,8 +164,6 @@ class NotificationService {
         name: 'Emergency Alerts',
         importance: AndroidImportance.HIGH,
         sound: 'danger_checkin',
-        vibration: true,
-        vibrationPattern: [500, 1000, 500, 1000],
       });
 
       console.log('Notification channels created');
@@ -333,7 +325,6 @@ class NotificationService {
           pressAction: {
             id: 'default',
           },
-          vibrationPattern: this.getVibrationPattern(soundType),
         },
         ios: {
           sound: `${this.getSoundFileName(soundType)}.mp3`,
@@ -346,20 +337,6 @@ class NotificationService {
       });
     } catch (error) {
       console.error('Error sending local notification:', error);
-    }
-  }
-
-  private getVibrationPattern(type: SoundType): number[] {
-    switch (type) {
-      case 'safe':
-        return [200, 300];
-      case 'warning':
-        return [300, 500, 300];
-      case 'danger':
-        return [500, 1000, 500, 1000];
-      case 'general':
-      default:
-        return [300, 500];
     }
   }
 

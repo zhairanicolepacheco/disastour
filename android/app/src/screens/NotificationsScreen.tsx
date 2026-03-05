@@ -17,6 +17,7 @@ import firestore from '@react-native-firebase/firestore';
 import NetInfo from '@react-native-community/netinfo';
 import { colors } from '../config/colors';
 import notificationService from '../services/notificationService';
+import SoundTestPanel from '../components/SoundTestPanel';
 
 // Import modals
 import AddContactModal from '../components/modals/AddContactModal';
@@ -488,6 +489,9 @@ const NotificationsScreen = ({ navigation }: any) => {
           />
         </View>
 
+        {/* Sound Test Panel - DEV ONLY */}
+        {/* {__DEV__ && <SoundTestPanel />} */}
+
         {/* Tabs */}
         <View style={styles.tabsContainer}>
           <TouchableOpacity
@@ -632,7 +636,7 @@ const NotificationsScreen = ({ navigation }: any) => {
           <Text style={styles.navLabel}>Hotline</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('Home')}>
+        <TouchableOpacity style={styles.navItem} onPress={() => navigation.navigate('MapHome')}>
           <Text style={styles.navIcon}>📍</Text>
           <Text style={styles.navLabel}>Location</Text>
         </TouchableOpacity>

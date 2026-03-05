@@ -1334,7 +1334,7 @@ const MapHomeScreen = ({ navigation }: any) => {
 
         <TouchableOpacity
           style={styles.navItem}
-          onPress={() => navigation.navigate('Home')}
+          onPress={() => navigation.navigate('MapHome')}
         >
           <Text style={[styles.navIcon, styles.navIconActive]}>📍</Text>
           <Text style={[styles.navLabel, styles.navLabelActive]}>Location</Text>
